@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "kind": "write_completed",
+  "requestId": "req_fixture_1",
+  "data": {
+    "taskSpec": {
+      "title": "添加邮箱密码登录",
+      "type": "feature",
+      "goal": "为现有应用添加最小可用的邮箱密码登录能力。",
+      "motivation": null,
+      "context": [],
+      "scope": { "inScope": ["登录"], "outOfScope": ["第三方登录"] },
+      "constraints": ["不得明文保存密码"],
+      "assumptions": ["沿用现有技术栈"],
+      "unknowns": ["当前认证方案"],
+      "agentBehavior": {
+        "inspectBeforeAction": true,
+        "planBeforeAction": true,
+        "confirmationRequiredFor": []
+      },
+      "acceptanceCriteria": ["合法账号可以登录"],
+      "verification": ["运行相关测试"],
+      "deliverables": ["代码和验证报告"],
+      "outputLanguage": "zh",
+      "targetAgent": "codex"
+    },
+    "renderedPrompt": "请先检查现有认证结构，再实现邮箱密码登录。",
+    "languageDecision": {
+      "language": "zh",
+      "reason": "需求包含中文产品语义。",
+      "userOverride": false
+    }
+  }
+}

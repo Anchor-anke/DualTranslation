@@ -1,0 +1,24 @@
+{
+  "title": "添加邮箱密码登录",
+  "type": "feature",
+  "goal": "为现有应用添加最小可用的邮箱密码登录能力。",
+  "motivation": "限制未登录用户访问个人数据。",
+  "context": ["沿用项目现有技术栈"],
+  "scope": {
+    "inScope": ["登录", "退出", "受保护路由"],
+    "outOfScope": ["第三方登录", "找回密码"]
+  },
+  "constraints": ["不得明文保存密码"],
+  "assumptions": ["首期不包含用户自助注册"],
+  "unknowns": ["现有项目使用的会话方案"],
+  "agentBehavior": {
+    "inspectBeforeAction": true,
+    "planBeforeAction": true,
+    "confirmationRequiredFor": ["新增外部认证服务"]
+  },
+  "acceptanceCriteria": ["合法账号可以登录并访问受保护页面", "退出后受保护页面不可访问"],
+  "verification": ["运行现有测试、类型检查和构建"],
+  "deliverables": ["实现代码", "验证结果和未验证项说明"],
+  "outputLanguage": "zh",
+  "targetAgent": "codex"
+}

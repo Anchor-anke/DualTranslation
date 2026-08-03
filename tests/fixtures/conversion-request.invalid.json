@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 2,
+  "mode": "translate",
+  "input": "",
+  "targetAgent": "unknown",
+  "languagePreference": "fr",
+  "generationMode": "always",
+  "clarificationAnswers": [],
+  "providerProfileId": "",
+  "saveToHistory": true,
+  "allowSensitiveHistory": false
+}

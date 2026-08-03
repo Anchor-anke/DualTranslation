@@ -1,0 +1,8 @@
+dist
+node_modules
+src-tauri/target
+coverage
+package-lock.json
+DualTranslation_PRD_v0.1.md
+docs/DualTranslation_Development_Plan_v0.1.md
+docs/DualTranslation_Functional_Modules_v0.1.md

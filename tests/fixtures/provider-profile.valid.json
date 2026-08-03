@@ -1,0 +1,8 @@
+{
+  "id": "default-openai-compatible",
+  "name": "默认模型",
+  "baseUrl": "https://api.example.com/v1",
+  "model": "example-model",
+  "timeoutMs": 30000,
+  "hasCredential": true
+}

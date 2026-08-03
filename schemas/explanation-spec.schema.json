@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dualtranslation.local/schemas/explanation-spec.schema.json",
+  "title": "ExplanationSpec",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "summary",
+    "status",
+    "actionsTaken",
+    "verificationResults",
+    "userDecisionsNeeded",
+    "risksAndWarnings",
+    "suggestedNextSteps",
+    "preservedTechnicalDetails",
+    "outputLanguage"
+  ],
+  "properties": {
+    "summary": { "type": "string", "minLength": 1, "maxLength": 4000 },
+    "status": { "enum": ["completed", "partial", "failed", "unclear"] },
+    "actionsTaken": { "$ref": "#/$defs/stringList" },
+    "verificationResults": { "$ref": "#/$defs/stringList" },
+    "userDecisionsNeeded": { "$ref": "#/$defs/stringList" },
+    "risksAndWarnings": { "$ref": "#/$defs/stringList" },
+    "suggestedNextSteps": { "$ref": "#/$defs/stringList" },
+    "preservedTechnicalDetails": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["commands", "filePaths", "errors", "codeSnippets", "warnings"],
+      "properties": {
+        "commands": { "$ref": "#/$defs/stringList" },
+        "filePaths": { "$ref": "#/$defs/stringList" },
+        "errors": { "$ref": "#/$defs/stringList" },
+        "codeSnippets": { "$ref": "#/$defs/stringList" },
+        "warnings": { "$ref": "#/$defs/stringList" }
+      }
+    },
+    "outputLanguage": { "enum": ["zh", "en", "bilingual"] }
+  },
+  "$defs": {
+    "stringList": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1, "maxLength": 12000 },
+      "maxItems": 200
+    }
+  }
+}

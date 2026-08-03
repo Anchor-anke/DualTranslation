@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dualtranslation.local/schemas/provider-profile.schema.json",
+  "title": "ProviderProfile",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "name", "baseUrl", "model", "timeoutMs", "hasCredential"],
+  "properties": {
+    "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "name": { "type": "string", "minLength": 1, "maxLength": 100 },
+    "baseUrl": { "type": "string", "format": "uri", "maxLength": 2048 },
+    "model": { "type": "string", "minLength": 1, "maxLength": 200 },
+    "timeoutMs": { "type": "integer", "minimum": 1000, "maximum": 300000 },
+    "hasCredential": { "type": "boolean" }
+  }
+}

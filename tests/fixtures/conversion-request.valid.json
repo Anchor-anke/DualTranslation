@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "mode": "write",
+  "input": "我想给项目加一个简单的登录。",
+  "targetAgent": "codex",
+  "languagePreference": "auto",
+  "generationMode": "negotiated",
+  "clarificationAnswers": [],
+  "providerProfileId": "default-openai-compatible",
+  "saveToHistory": true,
+  "allowSensitiveHistory": false
+}

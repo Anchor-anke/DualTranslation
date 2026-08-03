@@ -1,0 +1,81 @@
+name: Release desktop apps
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    name: Build ${{ matrix.label }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: macOS Apple Silicon
+            platform: macos-latest
+            rust_target: aarch64-apple-darwin
+            args: --target aarch64-apple-darwin
+            apple_signing_identity: "-"
+          - label: macOS Intel
+            platform: macos-latest
+            rust_target: x86_64-apple-darwin
+            args: --target x86_64-apple-darwin
+            apple_signing_identity: "-"
+          - label: Windows x64
+            platform: windows-latest
+            rust_target: x86_64-pc-windows-msvc
+            args: ""
+            apple_signing_identity: ""
+
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_target }}
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ./src-tauri -> target
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build and publish installers
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPLE_SIGNING_IDENTITY: ${{ matrix.apple_signing_identity }}
+        with:
+          tagName: v__VERSION__
+          releaseName: DualTranslation v__VERSION__
+          releaseBody: |
+            DualTranslation 首个桌面版本。
+
+            下载说明：
+            - Windows 10/11 x64：下载 `.msi` 或 `-setup.exe`。
+            - Apple Silicon Mac：下载文件名包含 `aarch64` 的 `.dmg`。
+            - Intel Mac：下载文件名包含 `x64` 或 `x86_64` 的 `.dmg`。
+
+            本版本尚未配置商业代码签名。安装时 macOS Gatekeeper 或 Windows SmartScreen 可能提示未知开发者，请确认文件来自本 Release 页面后再继续。
+
+            API Key 只保存在操作系统凭据库中，不包含在应用安装包、源码或 Release 附件内。
+          releaseDraft: false
+          prerelease: false
+          args: ${{ matrix.args }}

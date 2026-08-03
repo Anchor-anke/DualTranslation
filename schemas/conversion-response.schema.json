@@ -1,0 +1,128 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dualtranslation.local/schemas/conversion-response.schema.json",
+  "title": "ConversionResponse",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "kind", "requestId", "data"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "kind": {
+      "enum": ["clarification_required", "write_completed", "explain_completed", "failed"]
+    },
+    "requestId": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "data": { "type": "object" }
+  },
+  "oneOf": [
+    {
+      "properties": {
+        "kind": { "const": "clarification_required" },
+        "data": { "$ref": "#/$defs/clarificationData" }
+      }
+    },
+    {
+      "properties": {
+        "kind": { "const": "write_completed" },
+        "data": { "$ref": "#/$defs/writeData" }
+      }
+    },
+    {
+      "properties": {
+        "kind": { "const": "explain_completed" },
+        "data": { "$ref": "#/$defs/explainData" }
+      }
+    },
+    {
+      "properties": {
+        "kind": { "const": "failed" },
+        "data": { "$ref": "#/$defs/failureData" }
+      }
+    }
+  ],
+  "$defs": {
+    "languageDecision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["language", "reason", "userOverride"],
+      "properties": {
+        "language": { "enum": ["zh", "en", "bilingual"] },
+        "reason": { "type": "string", "minLength": 1, "maxLength": 1000 },
+        "userOverride": { "type": "boolean" }
+      }
+    },
+    "clarificationData": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["questions"],
+      "properties": {
+        "questions": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 3,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "question", "reason", "options"],
+            "properties": {
+              "id": { "type": "string", "minLength": 1, "maxLength": 100 },
+              "question": { "type": "string", "minLength": 1, "maxLength": 1000 },
+              "reason": { "type": "string", "minLength": 1, "maxLength": 1000 },
+              "options": {
+                "type": "array",
+                "maxItems": 5,
+                "items": { "type": "string", "minLength": 1, "maxLength": 500 }
+              }
+            }
+          }
+        }
+      }
+    },
+    "writeData": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["taskSpec", "renderedPrompt", "languageDecision"],
+      "properties": {
+        "taskSpec": {
+          "$ref": "https://dualtranslation.local/schemas/canonical-task-spec.schema.json"
+        },
+        "renderedPrompt": { "type": "string", "minLength": 1, "maxLength": 100000 },
+        "languageDecision": { "$ref": "#/$defs/languageDecision" }
+      }
+    },
+    "explainData": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["explanation", "plainText", "languageDecision"],
+      "properties": {
+        "explanation": {
+          "$ref": "https://dualtranslation.local/schemas/explanation-spec.schema.json"
+        },
+        "plainText": { "type": "string", "minLength": 1, "maxLength": 100000 },
+        "languageDecision": { "$ref": "#/$defs/languageDecision" }
+      }
+    },
+    "failureData": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message", "suggestedAction"],
+      "properties": {
+        "code": {
+          "enum": [
+            "AUTH_FAILED",
+            "NOT_FOUND",
+            "RATE_LIMITED",
+            "TIMEOUT",
+            "NETWORK_FAILED",
+            "SCHEMA_INVALID",
+            "PROVIDER_NOT_CONFIGURED",
+            "CREDENTIAL_UNAVAILABLE",
+            "REQUEST_CANCELLED",
+            "INTERNAL_ERROR"
+          ]
+        },
+        "message": { "type": "string", "minLength": 1, "maxLength": 1000 },
+        "suggestedAction": { "type": "string", "minLength": 1, "maxLength": 1000 }
+      }
+    }
+  }
+}

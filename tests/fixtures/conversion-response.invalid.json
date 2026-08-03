@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "kind": "clarification_required",
+  "requestId": "req_fixture_invalid",
+  "data": {
+    "questions": [
+      { "id": "1", "question": "问题 1", "reason": "原因", "options": [] },
+      { "id": "2", "question": "问题 2", "reason": "原因", "options": [] },
+      { "id": "3", "question": "问题 3", "reason": "原因", "options": [] },
+      { "id": "4", "question": "问题 4", "reason": "原因", "options": [] }
+    ]
+  }
+}
