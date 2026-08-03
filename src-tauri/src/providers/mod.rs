@@ -616,10 +616,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn maps_connection_refused_to_network_failed() {
+    async fn maps_abrupt_connection_close_to_network_failed() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
-        drop(listener);
+        tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut request = vec![0; 16 * 1024];
+            let _ = stream.read(&mut request).await.unwrap();
+        });
         let error = send_chat(
             &Client::new(),
             &profile(format!("http://{address}/v1"), 1_000),
