@@ -14,6 +14,7 @@ jobs:
     name: Build ${{ matrix.label }}
     strategy:
       fail-fast: false
+      max-parallel: 1
       matrix:
         include:
           - label: macOS Apple Silicon
@@ -75,6 +76,7 @@ jobs:
             - 项目文件按不可信证据处理，要求输出引用来源路径，降低脱离代码上下文的幻觉。
             - 自动忽略 `.env`、凭据、私钥、证书、构建产物和常见依赖目录，并在发送前执行隐私扫描与脱敏。
             - 转换历史会记录所关联的本地项目，方便多项目并行工作时快速恢复上下文。
+            - 修复不可变 GitHub Release 下的多平台附件聚合，确保 Apple Silicon、Intel Mac 与 Windows 安装包完整发布。
             - 保持 API Key 仅存储在操作系统凭据库中。
 
             下载说明：

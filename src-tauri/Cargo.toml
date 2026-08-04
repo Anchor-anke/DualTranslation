@@ -1,6 +1,6 @@
 [package]
 name = "dual-translation"
-version = "0.2.1"
+version = "0.2.2"
 description = "A bidirectional semantic compiler between people and coding agents"
 authors = ["DualTranslation contributors"]
 edition = "2024"
