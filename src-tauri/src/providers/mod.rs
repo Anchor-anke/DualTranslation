@@ -712,8 +712,8 @@ mod tests {
         assert!(error.message.contains("内容安全策略"));
     }
 
-    #[tokio::test]
-    async fn maps_common_provider_statuses_to_stable_codes() {
+    #[test]
+    fn maps_common_provider_statuses_to_stable_codes() {
         for (status, expected) in [
             (401, "AUTH_FAILED"),
             (403, "AUTH_FAILED"),
@@ -721,17 +721,7 @@ mod tests {
             (429, "RATE_LIMITED"),
             (500, "NETWORK_FAILED"),
         ] {
-            let base_url = mock_chat_server(status, r#"{"error":"mock"}"#, Duration::ZERO).await;
-            let error = send_chat(
-                &Client::new(),
-                &profile(base_url, 1_000),
-                "test-key",
-                "system",
-                "user",
-                InferenceMode::Fast,
-            )
-            .await
-            .unwrap_err();
+            let error = map_status(StatusCode::from_u16(status).unwrap());
             assert_eq!(error.code, expected);
         }
     }
