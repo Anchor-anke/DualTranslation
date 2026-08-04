@@ -271,6 +271,178 @@ summary:focus-visible {
   display: none;
   color: var(--muted);
 }
+.project-context-bar {
+  position: relative;
+  padding: 12px 24px 0;
+}
+.project-context-bar__summary {
+  width: 100%;
+  min-height: 48px;
+  border: 1px solid #d8e1dc;
+  border-radius: 11px;
+  background: #f5f8f5;
+  color: var(--ink);
+  padding: 8px 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  text-align: left;
+}
+.project-context-bar__summary > span {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+  flex: 1;
+}
+.project-context-bar__summary strong {
+  font-size: 11px;
+}
+.project-context-bar__summary small {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.project-context-bar__summary em {
+  border-radius: 999px;
+  background: #e1eee8;
+  color: var(--accent);
+  padding: 4px 7px;
+  font-size: 9px;
+  font-style: normal;
+  font-weight: 800;
+}
+.project-context-bar__summary[aria-expanded="true"] > svg:last-child {
+  transform: rotate(90deg);
+}
+.project-context-menu {
+  margin-top: 8px;
+  border: 1px solid #d8e1dc;
+  border-radius: 12px;
+  background: #fbfcf9;
+  box-shadow: 0 14px 30px rgba(24, 55, 42, 0.12);
+  padding: 12px;
+}
+.project-context-menu__heading,
+.project-context-menu__footer,
+.context-preview-project__heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.project-context-menu__heading > div {
+  display: grid;
+  gap: 3px;
+}
+.project-context-menu__heading strong {
+  font-size: 11px;
+}
+.project-context-menu__heading span,
+.project-context-menu__footer,
+.project-context-empty {
+  color: var(--muted);
+  font-size: 9px;
+}
+.project-context-empty {
+  margin-top: 10px;
+  border: 1px dashed #d5ddd8;
+  border-radius: 9px;
+  padding: 15px;
+  text-align: center;
+}
+.project-list {
+  display: grid;
+  gap: 6px;
+  margin-top: 10px;
+}
+.project-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 4px;
+  align-items: center;
+  border: 1px solid #e1e5df;
+  border-radius: 9px;
+  padding: 5px;
+  background: white;
+}
+.project-row.active {
+  border-color: rgba(12, 113, 84, 0.32);
+  background: #f2f8f5;
+}
+.project-row__select {
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 5px;
+  text-align: left;
+  cursor: pointer;
+}
+.project-row__select:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.project-row__check {
+  width: 20px;
+  height: 20px;
+  flex: 0 0 auto;
+  border: 1px solid #cdd8d2;
+  border-radius: 6px;
+  color: white;
+  display: grid;
+  place-items: center;
+  background: white;
+}
+.project-row.active .project-row__check {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+.project-row__select > span:last-child {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+.project-row__select strong,
+.project-row__select small,
+.project-row__select em {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.project-row__select strong {
+  color: var(--ink);
+  font-size: 11px;
+}
+.project-row__select small {
+  color: #7f8a84;
+  font-size: 8px;
+}
+.project-row__select em {
+  color: var(--muted);
+  font-size: 8px;
+  font-style: normal;
+}
+.project-row .icon-button {
+  width: 28px;
+  height: 28px;
+}
+.project-row .icon-button.active {
+  color: var(--accent);
+  background: #e2f0e9;
+}
+.project-context-menu__footer {
+  margin-top: 9px;
+  padding: 8px 3px 0;
+  border-top: 1px solid #e5e9e4;
+}
+.project-context-menu__footer .text-button:disabled {
+  opacity: 0.45;
+}
 .composer-heading {
   display: flex;
   align-items: flex-end;
@@ -811,6 +983,120 @@ input {
 .modal__icon--warning {
   color: #9c592e;
   background: #f7e6d7;
+}
+.project-context-review {
+  width: min(720px, 100%);
+}
+.project-context-review__icon {
+  color: var(--accent);
+  background: #e3f1eb;
+}
+.context-preview-list {
+  display: grid;
+  gap: 12px;
+  margin: 18px 0;
+}
+.context-preview-project {
+  border: 1px solid #dce3de;
+  border-radius: 12px;
+  background: #fcfcf8;
+  overflow: hidden;
+}
+.context-preview-project__heading {
+  padding: 12px 14px;
+  background: #f0f5f2;
+}
+.context-preview-project__heading > div {
+  display: grid;
+  gap: 3px;
+}
+.context-preview-project__heading strong {
+  font-size: 12px;
+}
+.context-preview-project__heading span,
+.context-preview-project__heading small {
+  color: var(--muted);
+  font-size: 9px;
+}
+.context-facts {
+  margin: 0;
+  padding: 11px 28px;
+  border-bottom: 1px solid #e5e9e5;
+  color: #57645e;
+  font-size: 9px;
+  line-height: 1.7;
+}
+.context-file-list {
+  display: grid;
+  padding: 6px;
+}
+.context-file {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+  border-radius: 8px;
+  padding: 8px;
+}
+.context-file:hover {
+  background: #f4f7f4;
+}
+.context-file input {
+  width: 15px;
+  height: 15px;
+  margin: 1px 0 0;
+  accent-color: var(--accent);
+}
+.context-file > span {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+.context-file label,
+.context-file__excerpt summary {
+  cursor: pointer;
+}
+.context-file code {
+  overflow: hidden;
+  color: #254338;
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.context-file small {
+  color: var(--muted);
+  font-size: 8px;
+}
+.context-file__excerpt {
+  margin-top: 2px;
+}
+.context-file__excerpt summary {
+  color: var(--accent);
+  font-size: 8px;
+}
+.context-file__excerpt pre {
+  max-height: 180px;
+  overflow: auto;
+  margin: 7px 0 0;
+  border: 1px solid #e0e5e1;
+  border-radius: 7px;
+  background: #f5f7f4;
+  padding: 9px;
+  color: #405048;
+  font-size: 8px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.context-review-summary {
+  border-radius: 9px;
+  background: #edf6f1;
+  color: #49645a;
+  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 9px;
 }
 .modal h2 {
   font-family: Georgia, "Songti SC", serif;

@@ -3,11 +3,12 @@ use crate::{
     error::{AppError, AppResult},
     platform,
     privacy::{SensitiveScanResult, scan},
-    providers,
+    project_context, providers,
     storage::{NewConversion, Storage},
     types::{
         AdjustmentResult, AppSettings, ConversionRequest, ConversionResponse, HistoryRecord,
-        HistorySummary, OutputLanguage, ProviderProfile, ProviderProfileDraft, ProviderTestResult,
+        HistorySummary, OutputLanguage, ProjectContextPreview, ProjectRecord, ProviderProfile,
+        ProviderProfileDraft, ProviderTestResult,
     },
 };
 use reqwest::Client;
@@ -15,6 +16,7 @@ use serde_json::Value;
 use std::{collections::HashMap, sync::Mutex, time::Instant};
 use tauri::{AppHandle, Manager, State};
 use tauri_plugin_clipboard_manager::ClipboardExt;
+use tauri_plugin_dialog::DialogExt;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
@@ -119,6 +121,106 @@ pub async fn scan_sensitive_text(
 }
 
 #[tauri::command]
+pub async fn select_project_folder(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> AppResult<Option<ProjectRecord>> {
+    let Some(selected) = app
+        .dialog()
+        .file()
+        .set_title("选择项目文件夹")
+        .blocking_pick_folder()
+    else {
+        return Ok(None);
+    };
+    let path = selected.into_path().map_err(AppError::internal)?;
+    let canonical = path.canonicalize().map_err(|_| {
+        AppError::new(
+            "NOT_FOUND",
+            "无法打开这个项目文件夹。",
+            "请检查文件夹是否存在以及当前账户是否有读取权限。",
+        )
+    })?;
+    let scan_path = canonical.clone();
+    let overview =
+        tauri::async_runtime::spawn_blocking(move || project_context::inspect_overview(&scan_path))
+            .await
+            .map_err(AppError::internal)??;
+    let path_text = canonical.to_string_lossy().into_owned();
+    state
+        .storage
+        .upsert_project(
+            &path_text,
+            &overview.name,
+            &overview.technologies,
+            overview.file_count,
+            &overview.fingerprint,
+        )
+        .await
+        .map(Some)
+}
+
+#[tauri::command]
+pub async fn list_projects(state: State<'_, AppState>) -> AppResult<Vec<ProjectRecord>> {
+    state.storage.list_projects().await
+}
+
+#[tauri::command]
+pub async fn set_project_pinned(
+    state: State<'_, AppState>,
+    project_id: String,
+    pinned: bool,
+) -> AppResult<()> {
+    state.storage.set_project_pinned(&project_id, pinned).await
+}
+
+#[tauri::command]
+pub async fn remove_project(state: State<'_, AppState>, project_id: String) -> AppResult<()> {
+    state.storage.remove_project(&project_id).await
+}
+
+#[tauri::command]
+pub async fn prepare_project_context(
+    state: State<'_, AppState>,
+    project_ids: Vec<String>,
+    query: String,
+) -> AppResult<Vec<ProjectContextPreview>> {
+    if project_ids.is_empty()
+        || project_ids.len() > 3
+        || query.trim().is_empty()
+        || query.chars().count() > 100_000
+    {
+        return Err(AppError::schema_invalid());
+    }
+    let unique = project_ids.iter().collect::<std::collections::HashSet<_>>();
+    if unique.len() != project_ids.len() {
+        return Err(AppError::schema_invalid());
+    }
+    let records = state.storage.get_projects(&project_ids).await?;
+    let scan_records = records.clone();
+    let previews = tauri::async_runtime::spawn_blocking(move || {
+        scan_records
+            .iter()
+            .map(|record| project_context::prepare_preview(record, &query))
+            .collect::<AppResult<Vec<_>>>()
+    })
+    .await
+    .map_err(AppError::internal)??;
+    for preview in &previews {
+        state
+            .storage
+            .update_project_scan(
+                &preview.project_id,
+                &preview.technologies,
+                preview.scanned_file_count,
+                &preview.fingerprint,
+            )
+            .await?;
+    }
+    Ok(previews)
+}
+
+#[tauri::command]
 pub async fn list_provider_profiles(state: State<'_, AppState>) -> AppResult<Vec<ProviderProfile>> {
     state.storage.list_provider_profiles().await
 }
@@ -185,6 +287,14 @@ pub async fn convert(
     request_id: Option<String>,
 ) -> AppResult<ConversionResponse> {
     validate_conversion_request(&request)?;
+    if !request.project_contexts.is_empty() {
+        let project_ids = request
+            .project_contexts
+            .iter()
+            .map(|context| context.project_id.clone())
+            .collect::<Vec<_>>();
+        state.storage.get_projects(&project_ids).await?;
+    }
     let profile = state
         .storage
         .get_provider_profile(&request.provider_profile_id)
@@ -381,6 +491,85 @@ fn validate_conversion_request(request: &ConversionRequest) -> AppResult<()> {
     if request.clarification_answers.len() > 20 {
         return Err(AppError::schema_invalid());
     }
+    if request.project_contexts.len() > 3 {
+        return Err(AppError::schema_invalid());
+    }
+    let mut project_ids = std::collections::HashSet::new();
+    let mut project_context_chars = 0_usize;
+    for context in &request.project_contexts {
+        if context.project_id.trim().is_empty()
+            || !project_ids.insert(context.project_id.as_str())
+            || context.files.len() > 8
+        {
+            return Err(AppError::schema_invalid());
+        }
+        project_context_chars = project_context_chars
+            .saturating_add(context.project_name.chars().count())
+            .saturating_add(
+                context
+                    .technologies
+                    .iter()
+                    .map(|value| value.chars().count())
+                    .sum::<usize>(),
+            )
+            .saturating_add(
+                context
+                    .facts
+                    .iter()
+                    .map(|value| value.chars().count())
+                    .sum::<usize>(),
+            );
+        for file in &context.files {
+            let path = std::path::Path::new(&file.path);
+            if path.is_absolute()
+                || path.components().any(|component| {
+                    matches!(
+                        component,
+                        std::path::Component::ParentDir
+                            | std::path::Component::RootDir
+                            | std::path::Component::Prefix(_)
+                    )
+                })
+            {
+                return Err(AppError::schema_invalid());
+            }
+            project_context_chars = project_context_chars
+                .saturating_add(file.path.chars().count())
+                .saturating_add(file.reason.chars().count())
+                .saturating_add(file.excerpt.chars().count());
+            if !scan(&file.excerpt).findings.is_empty() {
+                return Err(AppError::new(
+                    "SCHEMA_INVALID",
+                    "项目上下文仍包含可能的敏感信息。",
+                    "请重新扫描项目，确认敏感内容已遮盖后再试。",
+                ));
+            }
+        }
+    }
+    if project_context_chars > 70_000 {
+        return Err(AppError::new(
+            "INPUT_TOO_LONG",
+            "项目上下文内容过多。",
+            "请减少选中的项目或文件后重试。",
+        ));
+    }
+    for answer in &request.clarification_answers {
+        if answer.question.trim().is_empty()
+            || answer.answer.trim().is_empty()
+            || answer.question.chars().count() > 4_000
+            || answer.answer.chars().count() > 4_000
+        {
+            return Err(AppError::schema_invalid());
+        }
+        if !scan(&answer.question).findings.is_empty() || !scan(&answer.answer).findings.is_empty()
+        {
+            return Err(AppError::new(
+                "SCHEMA_INVALID",
+                "澄清内容包含可能的敏感信息。",
+                "请删除或遮盖敏感内容后重试。",
+            ));
+        }
+    }
     if request.allow_sensitive_history && !request.save_to_history {
         return Err(AppError::schema_invalid());
     }
@@ -425,6 +614,11 @@ async fn persist_if_allowed(
         _ => return Err(AppError::schema_invalid()),
     };
     let settings = storage.get_settings().await?;
+    let project_ids = request
+        .project_contexts
+        .iter()
+        .map(|context| context.project_id.clone())
+        .collect::<Vec<_>>();
     storage
         .save_conversion(NewConversion {
             mode: &request.mode,
@@ -435,6 +629,7 @@ async fn persist_if_allowed(
             response,
             rendered_text: rendered,
             history_limit: settings.history_limit,
+            project_ids: &project_ids,
         })
         .await
 }

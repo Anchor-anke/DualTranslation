@@ -1,11 +1,15 @@
 import { useMemo, useState } from "react";
 import { Icon } from "../../components/Icon";
-import type { ConversionResponse, CopyMetricKind } from "../../types/contracts";
+import type {
+  ClarificationAnswer,
+  ConversionResponse,
+  CopyMetricKind,
+} from "../../types/contracts";
 
 interface ResultPanelProps {
   response: ConversionResponse;
   onCopy: (text: string, metricKind: CopyMetricKind) => Promise<void>;
-  onClarificationsSubmit: (answers: Array<{ questionId: string; answer: string }>) => Promise<void>;
+  onClarificationsSubmit: (answers: ClarificationAnswer[]) => Promise<void>;
   onAdjust?: ((instruction: string) => Promise<void>) | undefined;
   onRetry: () => void;
   adjustmentInfo: { versionNo: number | null; changedFields: string[] } | null;
@@ -238,7 +242,7 @@ function ClarificationForm({
   onSubmit,
 }: {
   response: Extract<ConversionResponse, { kind: "clarification_required" }>;
-  onSubmit: (answers: Array<{ questionId: string; answer: string }>) => Promise<void>;
+  onSubmit: (answers: ClarificationAnswer[]) => Promise<void>;
 }) {
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
@@ -291,6 +295,8 @@ function ClarificationForm({
             void onSubmit(
               response.data.questions.map((question) => ({
                 questionId: question.id,
+                question: question.question,
+                reason: question.reason,
                 answer: answers[question.id]?.trim() ?? "",
               })),
             ).finally(() => setSubmitting(false));

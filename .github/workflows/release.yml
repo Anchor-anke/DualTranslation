@@ -66,12 +66,15 @@ jobs:
           tagName: v__VERSION__
           releaseName: DualTranslation v__VERSION__
           releaseBody: |
-            DualTranslation v__VERSION__ 提升了模型服务响应的兼容性与稳定性。
+            DualTranslation v__VERSION__ 新增多项目上下文，让 Agent 在生成提示词前先理解你的本地项目。
 
             本次更新：
-            - 兼容 DeepSeek/OpenAI Chat Completions 返回的空 `content`。
-            - 根据 `finish_reason` 区分资源不足、内容过滤和输出截断。
-            - 对临时 HTTP 5xx 与推理资源不足执行有限退避重试。
+            - 可选择并记住多个本地项目，支持固定、最近使用与最多 3 个项目同时参与转换。
+            - 智能扫描项目技术栈与任务相关文件，并允许在发送前预览、取消选择上下文文件。
+            - 默认使用智能模式；信息不足时先追问，再结合补充答案继续生成。
+            - 项目文件按不可信证据处理，要求输出引用来源路径，降低脱离代码上下文的幻觉。
+            - 自动忽略 `.env`、凭据、私钥、证书、构建产物和常见依赖目录，并在发送前执行隐私扫描与脱敏。
+            - 转换历史会记录所关联的本地项目，方便多项目并行工作时快速恢复上下文。
             - 保持 API Key 仅存储在操作系统凭据库中。
 
             下载说明：

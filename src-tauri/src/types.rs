@@ -73,7 +73,47 @@ pub enum GenerationMode {
 #[serde(rename_all = "camelCase")]
 pub struct ClarificationAnswer {
     pub question_id: String,
+    pub question: String,
+    pub reason: String,
     pub answer: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectFileExcerpt {
+    pub path: String,
+    pub reason: String,
+    pub excerpt: String,
+    pub truncated: bool,
+    pub redacted_findings: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectContextPreview {
+    pub project_id: String,
+    pub project_name: String,
+    pub technologies: Vec<String>,
+    pub facts: Vec<String>,
+    pub files: Vec<ProjectFileExcerpt>,
+    pub scanned_file_count: u32,
+    pub ignored_file_count: u32,
+    pub redacted_findings: u32,
+    pub fingerprint: String,
+    pub scanned_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectRecord {
+    pub id: String,
+    pub name: String,
+    pub path: String,
+    pub pinned: bool,
+    pub technologies: Vec<String>,
+    pub file_count: u32,
+    pub fingerprint: String,
+    pub last_used_at: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -86,6 +126,7 @@ pub struct ConversionRequest {
     pub language_preference: LanguagePreference,
     pub generation_mode: GenerationMode,
     pub clarification_answers: Vec<ClarificationAnswer>,
+    pub project_contexts: Vec<ProjectContextPreview>,
     pub provider_profile_id: String,
     pub save_to_history: bool,
     pub allow_sensitive_history: bool,
@@ -314,5 +355,6 @@ pub struct HistoryRecord {
     pub summary: HistorySummary,
     pub original_input: String,
     pub sensitive: bool,
+    pub project_ids: Vec<String>,
     pub versions: Vec<HistoryVersion>,
 }

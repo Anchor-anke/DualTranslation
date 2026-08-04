@@ -9,6 +9,8 @@ import type {
   HistoryRecord,
   HistorySummary,
   LocalMetrics,
+  ProjectContextPreview,
+  ProjectRecord,
   ProviderProfile,
   ProviderProfileDraft,
   ProviderTestResult,
@@ -55,6 +57,34 @@ export async function scanSensitiveText(text: string): Promise<SensitiveScanResu
     return { findings: [], redactedText: text };
   }
   return invoke<SensitiveScanResult>("scan_sensitive_text", { text });
+}
+
+export async function selectProjectFolder(): Promise<ProjectRecord | null> {
+  requireDesktop();
+  return invoke<ProjectRecord | null>("select_project_folder");
+}
+
+export async function listProjects(): Promise<ProjectRecord[]> {
+  if (!isTauriRuntime()) return [];
+  return invoke<ProjectRecord[]>("list_projects");
+}
+
+export async function setProjectPinned(projectId: string, pinned: boolean): Promise<void> {
+  requireDesktop();
+  await invoke("set_project_pinned", { projectId, pinned });
+}
+
+export async function removeProject(projectId: string): Promise<void> {
+  requireDesktop();
+  await invoke("remove_project", { projectId });
+}
+
+export async function prepareProjectContext(
+  projectIds: string[],
+  query: string,
+): Promise<ProjectContextPreview[]> {
+  requireDesktop();
+  return invoke<ProjectContextPreview[]>("prepare_project_context", { projectIds, query });
 }
 
 export async function convert(

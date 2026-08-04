@@ -2,7 +2,7 @@ use crate::{
     error::{AppError, AppResult},
     types::{
         AppSettings, ConversionMode, ConversionResponse, HistoryRecord, HistorySummary,
-        HistoryVersion, OutputLanguage, ProviderProfile, TargetAgent,
+        HistoryVersion, OutputLanguage, ProjectRecord, ProviderProfile, TargetAgent,
     },
 };
 use chrono::Utc;
@@ -16,6 +16,7 @@ use tauri::{AppHandle, Manager};
 use uuid::Uuid;
 
 const MIGRATION: &str = include_str!("../../migrations/001_initial.sql");
+const PROJECT_MIGRATION: &str = include_str!("../../migrations/002_projects.sql");
 
 #[derive(Clone)]
 pub struct Storage {
@@ -31,6 +32,7 @@ pub struct NewConversion<'a> {
     pub response: &'a ConversionResponse,
     pub rendered_text: &'a str,
     pub history_limit: u32,
+    pub project_ids: &'a [String],
 }
 
 impl Storage {
@@ -51,6 +53,10 @@ impl Storage {
             .await
             .map_err(AppError::internal)?;
         sqlx::raw_sql(MIGRATION)
+            .execute(&pool)
+            .await
+            .map_err(AppError::internal)?;
+        sqlx::raw_sql(PROJECT_MIGRATION)
             .execute(&pool)
             .await
             .map_err(AppError::internal)?;
@@ -155,6 +161,136 @@ impl Storage {
         Ok(())
     }
 
+    pub async fn list_projects(&self) -> AppResult<Vec<ProjectRecord>> {
+        let rows = sqlx::query(
+            r#"SELECT id, name, path, pinned, technologies_json, file_count, fingerprint, last_used_at
+               FROM projects ORDER BY pinned DESC, last_used_at DESC"#,
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(AppError::internal)?;
+        rows.into_iter().map(project_from_row).collect()
+    }
+
+    pub async fn get_projects(&self, ids: &[String]) -> AppResult<Vec<ProjectRecord>> {
+        let mut projects = Vec::with_capacity(ids.len());
+        for id in ids {
+            let row = sqlx::query(
+                r#"SELECT id, name, path, pinned, technologies_json, file_count, fingerprint, last_used_at
+                   FROM projects WHERE id = ?"#,
+            )
+            .bind(id)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(AppError::internal)?
+            .ok_or_else(|| {
+                AppError::new(
+                    "NOT_FOUND",
+                    "找不到已选择的项目。",
+                    "项目可能已被移除，请重新选择文件夹。",
+                )
+            })?;
+            projects.push(project_from_row(row)?);
+        }
+        Ok(projects)
+    }
+
+    pub async fn upsert_project(
+        &self,
+        path: &str,
+        name: &str,
+        technologies: &[String],
+        file_count: u32,
+        fingerprint: &str,
+    ) -> AppResult<ProjectRecord> {
+        let now = Utc::now().to_rfc3339();
+        let existing_id = sqlx::query_scalar::<_, String>("SELECT id FROM projects WHERE path = ?")
+            .bind(path)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(AppError::internal)?;
+        let id = existing_id.unwrap_or_else(|| Uuid::new_v4().to_string());
+        sqlx::query(
+            r#"INSERT INTO projects
+               (id, name, path, pinned, technologies_json, file_count, fingerprint, last_used_at, created_at, updated_at)
+               VALUES (?, ?, ?, 0, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(path) DO UPDATE SET
+                 name = excluded.name,
+                 technologies_json = excluded.technologies_json,
+                 file_count = excluded.file_count,
+                 fingerprint = excluded.fingerprint,
+                 last_used_at = excluded.last_used_at,
+                 updated_at = excluded.updated_at"#,
+        )
+        .bind(&id)
+        .bind(name)
+        .bind(path)
+        .bind(serde_json::to_string(technologies).map_err(AppError::internal)?)
+        .bind(i64::from(file_count))
+        .bind(fingerprint)
+        .bind(&now)
+        .bind(&now)
+        .bind(&now)
+        .execute(&self.pool)
+        .await
+        .map_err(AppError::internal)?;
+        self.get_projects(&[id])
+            .await?
+            .into_iter()
+            .next()
+            .ok_or_else(|| AppError::internal("project disappeared immediately after being saved"))
+    }
+
+    pub async fn update_project_scan(
+        &self,
+        id: &str,
+        technologies: &[String],
+        file_count: u32,
+        fingerprint: &str,
+    ) -> AppResult<()> {
+        sqlx::query(
+            r#"UPDATE projects SET technologies_json = ?, file_count = ?, fingerprint = ?,
+               last_used_at = ?, updated_at = ? WHERE id = ?"#,
+        )
+        .bind(serde_json::to_string(technologies).map_err(AppError::internal)?)
+        .bind(i64::from(file_count))
+        .bind(fingerprint)
+        .bind(Utc::now().to_rfc3339())
+        .bind(Utc::now().to_rfc3339())
+        .bind(id)
+        .execute(&self.pool)
+        .await
+        .map_err(AppError::internal)?;
+        Ok(())
+    }
+
+    pub async fn set_project_pinned(&self, id: &str, pinned: bool) -> AppResult<()> {
+        let result = sqlx::query("UPDATE projects SET pinned = ?, updated_at = ? WHERE id = ?")
+            .bind(i64::from(pinned))
+            .bind(Utc::now().to_rfc3339())
+            .bind(id)
+            .execute(&self.pool)
+            .await
+            .map_err(AppError::internal)?;
+        if result.rows_affected() == 0 {
+            return Err(AppError::new(
+                "NOT_FOUND",
+                "找不到这个项目。",
+                "请刷新项目列表后重试。",
+            ));
+        }
+        Ok(())
+    }
+
+    pub async fn remove_project(&self, id: &str) -> AppResult<()> {
+        sqlx::query("DELETE FROM projects WHERE id = ?")
+            .bind(id)
+            .execute(&self.pool)
+            .await
+            .map_err(AppError::internal)?;
+        Ok(())
+    }
+
     pub async fn get_settings(&self) -> AppResult<AppSettings> {
         let value =
             sqlx::query_scalar::<_, String>("SELECT value_json FROM settings WHERE key = 'app'")
@@ -215,6 +351,17 @@ impl Storage {
         .execute(&mut *transaction)
         .await
         .map_err(AppError::internal)?;
+        for (position, project_id) in conversion.project_ids.iter().enumerate() {
+            sqlx::query(
+                "INSERT OR IGNORE INTO conversion_projects(conversion_id, project_id, position) VALUES (?, ?, ?)",
+            )
+            .bind(&conversion_id)
+            .bind(project_id)
+            .bind(i64::try_from(position).map_err(AppError::internal)?)
+            .execute(&mut *transaction)
+            .await
+            .map_err(AppError::internal)?;
+        }
         transaction.commit().await.map_err(AppError::internal)?;
         self.prune_history(conversion.history_limit).await
     }
@@ -334,10 +481,18 @@ impl Storage {
                 })
             })
             .collect::<AppResult<Vec<_>>>()?;
+        let project_ids = sqlx::query_scalar::<_, String>(
+            "SELECT project_id FROM conversion_projects WHERE conversion_id = ? ORDER BY position ASC",
+        )
+        .bind(id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(AppError::internal)?;
         Ok(HistoryRecord {
             summary,
             original_input,
             sensitive,
+            project_ids,
             versions,
         })
     }
@@ -420,6 +575,29 @@ impl Storage {
     }
 }
 
+fn project_from_row(row: sqlx::sqlite::SqliteRow) -> AppResult<ProjectRecord> {
+    let technologies_json: String = row
+        .try_get("technologies_json")
+        .map_err(AppError::internal)?;
+    Ok(ProjectRecord {
+        id: row.try_get("id").map_err(AppError::internal)?,
+        name: row.try_get("name").map_err(AppError::internal)?,
+        path: row.try_get("path").map_err(AppError::internal)?,
+        pinned: row
+            .try_get::<i64, _>("pinned")
+            .map_err(AppError::internal)?
+            != 0,
+        technologies: serde_json::from_str(&technologies_json).map_err(AppError::internal)?,
+        file_count: row
+            .try_get::<i64, _>("file_count")
+            .map_err(AppError::internal)?
+            .try_into()
+            .map_err(AppError::internal)?,
+        fingerprint: row.try_get("fingerprint").map_err(AppError::internal)?,
+        last_used_at: row.try_get("last_used_at").map_err(AppError::internal)?,
+    })
+}
+
 fn history_summary_from_row(row: sqlx::sqlite::SqliteRow) -> AppResult<HistorySummary> {
     let mode = match row
         .try_get::<String, _>("mode")
@@ -484,6 +662,10 @@ mod tests {
             .execute(&storage.pool)
             .await
             .unwrap();
+        sqlx::raw_sql(PROJECT_MIGRATION)
+            .execute(&storage.pool)
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
@@ -498,6 +680,50 @@ mod tests {
             .map(|row| row.get::<String, _>("name"))
             .collect::<Vec<_>>();
         assert!(!names.iter().any(|name| name.contains("api_key")));
+    }
+
+    #[tokio::test]
+    async fn project_library_keeps_recent_metadata_and_history_links() {
+        let storage = storage().await;
+        let technologies = vec!["Rust".to_owned(), "React".to_owned()];
+        let project = storage
+            .upsert_project(
+                "/tmp/dualtranslation-project",
+                "dualtranslation-project",
+                &technologies,
+                42,
+                "fingerprint-1",
+            )
+            .await
+            .unwrap();
+        storage.set_project_pinned(&project.id, true).await.unwrap();
+        let projects = storage.list_projects().await.unwrap();
+        assert_eq!(projects.len(), 1);
+        assert!(projects[0].pinned);
+        assert_eq!(projects[0].technologies, technologies);
+
+        let response = ConversionResponse {
+            schema_version: 1,
+            kind: "write_completed".into(),
+            request_id: "project-linked".into(),
+            data: serde_json::json!({ "renderedPrompt": "linked" }),
+        };
+        storage
+            .save_conversion(NewConversion {
+                mode: &ConversionMode::Write,
+                original_input: "更新项目",
+                sensitive: false,
+                target_agent: &TargetAgent::Codex,
+                output_language: &OutputLanguage::Zh,
+                response: &response,
+                rendered_text: "linked",
+                history_limit: 20,
+                project_ids: std::slice::from_ref(&project.id),
+            })
+            .await
+            .unwrap();
+        let history = storage.get_history("project-linked").await.unwrap();
+        assert_eq!(history.project_ids, vec![project.id]);
     }
 
     #[tokio::test]
@@ -522,6 +748,7 @@ mod tests {
                     response: &response,
                     rendered_text: &rendered,
                     history_limit: 2,
+                    project_ids: &[],
                 })
                 .await
                 .unwrap();
@@ -556,6 +783,7 @@ mod tests {
                 response: &initial,
                 rendered_text: "initial",
                 history_limit: 20,
+                project_ids: &[],
             })
             .await
             .unwrap();

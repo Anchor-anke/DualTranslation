@@ -6,6 +6,7 @@
   "languagePreference": "auto",
   "generationMode": "negotiated",
   "clarificationAnswers": [],
+  "projectContexts": [],
   "providerProfileId": "default-openai-compatible",
   "saveToHistory": true,
   "allowSensitiveHistory": false

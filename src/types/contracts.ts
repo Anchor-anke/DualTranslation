@@ -62,6 +62,45 @@ export interface ClarificationQuestion {
   options: string[];
 }
 
+export interface ClarificationAnswer {
+  questionId: string;
+  question: string;
+  reason: string;
+  answer: string;
+}
+
+export interface ProjectFileExcerpt {
+  path: string;
+  reason: string;
+  excerpt: string;
+  truncated: boolean;
+  redactedFindings: number;
+}
+
+export interface ProjectContextPreview {
+  projectId: string;
+  projectName: string;
+  technologies: string[];
+  facts: string[];
+  files: ProjectFileExcerpt[];
+  scannedFileCount: number;
+  ignoredFileCount: number;
+  redactedFindings: number;
+  fingerprint: string;
+  scannedAt: string;
+}
+
+export interface ProjectRecord {
+  id: string;
+  name: string;
+  path: string;
+  pinned: boolean;
+  technologies: string[];
+  fileCount: number;
+  fingerprint: string;
+  lastUsedAt: string;
+}
+
 export interface ConversionRequest {
   schemaVersion: 1;
   mode: ConversionMode;
@@ -69,7 +108,8 @@ export interface ConversionRequest {
   targetAgent: TargetAgent;
   languagePreference: LanguagePreference;
   generationMode: GenerationMode;
-  clarificationAnswers: Array<{ questionId: string; answer: string }>;
+  clarificationAnswers: ClarificationAnswer[];
+  projectContexts: ProjectContextPreview[];
   providerProfileId: string;
   saveToHistory: boolean;
   allowSensitiveHistory: boolean;
@@ -190,6 +230,7 @@ export interface HistorySummary {
 export interface HistoryRecord extends HistorySummary {
   originalInput: string;
   sensitive: boolean;
+  projectIds: string[];
   versions: Array<{
     versionNo: number;
     renderedText: string;

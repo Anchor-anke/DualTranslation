@@ -5,31 +5,52 @@ import {
   adjustConversion,
   cancelConversion,
   convert,
+  listProjects,
+  prepareProjectContext,
   readClipboardText,
+  removeProject,
   scanSensitiveText,
+  selectProjectFolder,
+  setProjectPinned,
   writeClipboardText,
 } from "../../lib/commands";
 import { normalizeAppError } from "../../lib/errors";
 import type {
   AppSettings,
+  ClarificationAnswer,
   CopyMetricKind,
   ConversionMode,
   ConversionRequest,
   ConversionResponse,
   GenerationMode,
   LanguagePreference,
+  ProjectContextPreview,
+  ProjectRecord,
   SensitiveScanResult,
   TargetAgent,
 } from "../../types/contracts";
 import { PrivacyDialog } from "../privacy/PrivacyDialog";
+import { ProjectContextBar, ProjectContextReviewDialog } from "./ProjectContextControls";
 import { ResultPanel } from "./ResultPanel";
 
 const maxInputLength = 100_000;
+const activeProjectsStorageKey = "dualtranslation.active-projects";
+
+function readRememberedProjectIds(): string[] {
+  try {
+    const value = JSON.parse(localStorage.getItem(activeProjectsStorageKey) ?? "[]") as unknown;
+    return Array.isArray(value)
+      ? value.filter((item): item is string => typeof item === "string")
+      : [];
+  } catch {
+    return [];
+  }
+}
 
 interface ConversionWorkbenchProps {
   settings: AppSettings;
   onOpenSettings: () => void;
-  restored?: { input: string; response: ConversionResponse } | null;
+  restored?: { input: string; response: ConversionResponse; projectIds?: string[] } | null;
 }
 
 export function ConversionWorkbench({
@@ -54,7 +75,7 @@ export function ConversionWorkbench({
   const [conversionAllowSensitiveHistory, setConversionAllowSensitiveHistory] = useState(false);
   const [targetAgent, setTargetAgent] = useState<TargetAgent>(restoredAgent);
   const [language, setLanguage] = useState<LanguagePreference>(restoredLanguage);
-  const [generationMode, setGenerationMode] = useState<GenerationMode>("quick");
+  const [generationMode, setGenerationMode] = useState<GenerationMode>("negotiated");
   const [isLoading, setIsLoading] = useState(false);
   const [activeRequestId, setActiveRequestId] = useState<string | null>(null);
   const [response, setResponse] = useState<ConversionResponse | null>(restored?.response ?? null);
@@ -63,6 +84,21 @@ export function ConversionWorkbench({
     changedFields: string[];
   } | null>(null);
   const [scan, setScan] = useState<SensitiveScanResult | null>(null);
+  const [projects, setProjects] = useState<ProjectRecord[]>([]);
+  const [selectedProjectIds, setSelectedProjectIds] = useState<string[]>(readRememberedProjectIds);
+  const [projectBusy, setProjectBusy] = useState(false);
+  const [clarificationTranscript, setClarificationTranscript] = useState<ClarificationAnswer[]>([]);
+  const [conversionProjectContexts, setConversionProjectContexts] = useState<
+    ProjectContextPreview[]
+  >([]);
+  const [contextReview, setContextReview] = useState<{
+    previews: ProjectContextPreview[];
+    pendingConversion: {
+      text: string;
+      saveToHistory: boolean;
+      allowSensitiveHistory: boolean;
+    } | null;
+  } | null>(null);
   const [toast, setToast] = useState<{
     message: string;
     tone: "success" | "error" | "info";
@@ -75,11 +111,39 @@ export function ConversionWorkbench({
     return () => window.removeEventListener("dualtranslation:focus-input", focusInput);
   }, []);
 
+  useEffect(() => {
+    void listProjects()
+      .then((loaded) => {
+        setProjects(loaded);
+        const restoredIds = restored?.projectIds ?? [];
+        const rememberedIds = readRememberedProjectIds();
+        const available = new Set(loaded.map((project) => project.id));
+        const selected = (restoredIds.length > 0 ? restoredIds : rememberedIds)
+          .filter((id) => available.has(id))
+          .slice(0, 3);
+        const first = loaded.at(0);
+        if (selected.length > 0) {
+          setSelectedProjectIds(selected);
+        } else if (first) {
+          setSelectedProjectIds([first.id]);
+        } else {
+          setSelectedProjectIds([]);
+        }
+      })
+      .catch(() => undefined);
+  }, [restored?.projectIds]);
+
+  useEffect(() => {
+    localStorage.setItem(activeProjectsStorageKey, JSON.stringify(selectedProjectIds));
+  }, [selectedProjectIds]);
+
   function switchMode(nextMode: ConversionMode): void {
     setMode(nextMode);
     setLanguage(nextMode === "write" ? settings.writeLanguage : settings.explainLanguage);
     setResponse(null);
     setAdjustmentInfo(null);
+    setClarificationTranscript([]);
+    setConversionProjectContexts([]);
   }
 
   async function handleReadClipboard(): Promise<void> {
@@ -94,6 +158,101 @@ export function ConversionWorkbench({
     } catch (error) {
       setToast({ message: normalizeAppError(error).message, tone: "error" });
     }
+  }
+
+  async function handleAddProject(): Promise<void> {
+    setProjectBusy(true);
+    try {
+      const project = await selectProjectFolder();
+      if (!project) return;
+      const loaded = await listProjects();
+      setProjects(loaded);
+      setSelectedProjectIds((current) => {
+        if (current.includes(project.id)) return current;
+        if (current.length >= 3) return current;
+        return [...current, project.id];
+      });
+      setToast({
+        message:
+          selectedProjectIds.length >= 3
+            ? `已添加项目：${project.name}；当前组合已满，请先取消一个项目。`
+            : `已添加项目：${project.name}`,
+        tone: "success",
+      });
+    } catch (error) {
+      setToast({ message: normalizeAppError(error).message, tone: "error" });
+    } finally {
+      setProjectBusy(false);
+    }
+  }
+
+  function handleToggleProject(projectId: string): void {
+    if (!selectedProjectIds.includes(projectId) && selectedProjectIds.length >= 3) {
+      setToast({ message: "一次任务最多组合 3 个项目。", tone: "info" });
+      return;
+    }
+    setSelectedProjectIds((current) => {
+      if (current.includes(projectId)) return current.filter((id) => id !== projectId);
+      return [...current, projectId];
+    });
+    setResponse(null);
+    setClarificationTranscript([]);
+    setConversionProjectContexts([]);
+  }
+
+  async function handleSetProjectPinned(projectId: string, pinned: boolean): Promise<void> {
+    try {
+      await setProjectPinned(projectId, pinned);
+      setProjects(await listProjects());
+    } catch (error) {
+      setToast({ message: normalizeAppError(error).message, tone: "error" });
+    }
+  }
+
+  async function handleRemoveProject(projectId: string): Promise<void> {
+    try {
+      await removeProject(projectId);
+      setProjects((current) => current.filter((project) => project.id !== projectId));
+      setSelectedProjectIds((current) => current.filter((id) => id !== projectId));
+      setToast({ message: "已从项目列表移除；磁盘文件没有删除。", tone: "info" });
+    } catch (error) {
+      setToast({ message: normalizeAppError(error).message, tone: "error" });
+    }
+  }
+
+  async function openProjectContextPreview(
+    text: string,
+    pendingConversion: {
+      text: string;
+      saveToHistory: boolean;
+      allowSensitiveHistory: boolean;
+    } | null,
+  ): Promise<void> {
+    if (selectedProjectIds.length === 0) return;
+    setProjectBusy(true);
+    try {
+      const previews = await prepareProjectContext(selectedProjectIds, text);
+      setProjects(await listProjects());
+      setContextReview({ previews, pendingConversion });
+    } catch (error) {
+      setToast({ message: normalizeAppError(error).message, tone: "error" });
+    } finally {
+      setProjectBusy(false);
+    }
+  }
+
+  async function beginWithProjectContext(
+    text: string,
+    saveToHistory: boolean,
+    allowSensitiveHistory: boolean,
+  ): Promise<void> {
+    setClarificationTranscript([]);
+    setConversionProjectContexts([]);
+    if (mode === "write" && selectedProjectIds.length > 0) {
+      await openProjectContextPreview(text, { text, saveToHistory, allowSensitiveHistory });
+      return;
+    }
+    await runConversion(text, saveToHistory, [], allowSensitiveHistory, []);
   }
 
   async function beginConversion(): Promise<void> {
@@ -115,7 +274,7 @@ export function ConversionWorkbench({
         setScan(result);
         return;
       }
-      await runConversion(trimmed, true);
+      await beginWithProjectContext(trimmed, true, false);
     } catch (error) {
       setToast({ message: normalizeAppError(error).message, tone: "error" });
     }
@@ -124,8 +283,9 @@ export function ConversionWorkbench({
   async function runConversion(
     text: string,
     saveToHistory: boolean,
-    clarificationAnswers: Array<{ questionId: string; answer: string }> = [],
+    clarificationAnswers: ClarificationAnswer[] = [],
     allowSensitiveHistory = false,
+    projectContexts: ProjectContextPreview[] = [],
   ): Promise<void> {
     if (!settings.activeProviderProfileId) return;
     const requestId = crypto.randomUUID();
@@ -137,6 +297,7 @@ export function ConversionWorkbench({
       languagePreference: language,
       generationMode,
       clarificationAnswers,
+      projectContexts,
       providerProfileId: settings.activeProviderProfileId,
       saveToHistory,
       allowSensitiveHistory,
@@ -146,6 +307,8 @@ export function ConversionWorkbench({
     setConversionInput(text);
     setConversionSaveToHistory(saveToHistory);
     setConversionAllowSensitiveHistory(allowSensitiveHistory);
+    setClarificationTranscript(clarificationAnswers);
+    setConversionProjectContexts(projectContexts);
     setIsLoading(true);
     setActiveRequestId(requestId);
     setResponse(null);
@@ -166,9 +329,7 @@ export function ConversionWorkbench({
     }
   }
 
-  async function submitClarifications(
-    answers: Array<{ questionId: string; answer: string }>,
-  ): Promise<void> {
+  async function submitClarifications(answers: ClarificationAnswer[]): Promise<void> {
     const answerText = answers.map((answer) => answer.answer).join("\n");
     const answerScan = await scanSensitiveText(answerText);
     if (answerScan.findings.length > 0) {
@@ -178,11 +339,13 @@ export function ConversionWorkbench({
       });
       return;
     }
+    const transcript = [...clarificationTranscript, ...answers];
     await runConversion(
       conversionInput || input.trim(),
       conversionSaveToHistory,
-      answers,
+      transcript,
       conversionAllowSensitiveHistory,
+      conversionProjectContexts,
     );
   }
 
@@ -264,6 +427,27 @@ export function ConversionWorkbench({
           </button>
         </div>
 
+        {mode === "write" && (
+          <ProjectContextBar
+            busy={projectBusy}
+            onAdd={() => void handleAddProject()}
+            onPreview={() => {
+              const query = input.trim();
+              if (!query) {
+                setToast({ message: "先输入任务想法，再筛选相关项目上下文。", tone: "info" });
+                inputRef.current?.focus();
+                return;
+              }
+              void openProjectContextPreview(query, null);
+            }}
+            onRemove={(projectId) => void handleRemoveProject(projectId)}
+            onSetPinned={(projectId, pinned) => void handleSetProjectPinned(projectId, pinned)}
+            onToggle={handleToggleProject}
+            projects={projects}
+            selectedProjectIds={selectedProjectIds}
+          />
+        )}
+
         <div className="composer-heading">
           <div>
             <h1>{mode === "write" ? "输入你的想法" : "粘贴 Agent 回复"}</h1>
@@ -285,6 +469,8 @@ export function ConversionWorkbench({
             onChange={(event) => {
               setInput(event.target.value);
               if (response) setResponse(null);
+              setClarificationTranscript([]);
+              setConversionProjectContexts([]);
             }}
             placeholder={
               mode === "write"
@@ -304,7 +490,16 @@ export function ConversionWorkbench({
               {input.length.toLocaleString("zh-CN")} / {maxInputLength.toLocaleString("zh-CN")}
             </span>
             {input && (
-              <button className="text-button" onClick={() => setInput("")} type="button">
+              <button
+                className="text-button"
+                onClick={() => {
+                  setInput("");
+                  setResponse(null);
+                  setClarificationTranscript([]);
+                  setConversionProjectContexts([]);
+                }}
+                type="button"
+              >
                 清空
               </button>
             )}
@@ -343,8 +538,8 @@ export function ConversionWorkbench({
                 onChange={(event) => setGenerationMode(event.target.value as GenerationMode)}
                 value={generationMode}
               >
-                <option value="quick">快速模式</option>
-                <option value="negotiated">协商模式</option>
+                <option value="negotiated">智能模式</option>
+                <option value="quick">直接生成</option>
               </select>
             </label>
           )}
@@ -402,10 +597,29 @@ export function ConversionWorkbench({
         <PrivacyDialog
           onCancel={() => setScan(null)}
           onContinueOriginal={(saveToHistory) =>
-            void runConversion(input.trim(), saveToHistory, [], saveToHistory)
+            void beginWithProjectContext(input.trim(), saveToHistory, saveToHistory)
           }
-          onContinueRedacted={() => void runConversion(scan.redactedText, true)}
+          onContinueRedacted={() => void beginWithProjectContext(scan.redactedText, true, false)}
           scan={scan}
+        />
+      )}
+      {contextReview && (
+        <ProjectContextReviewDialog
+          confirmLabel={contextReview.pendingConversion ? "确认并生成" : "完成预览"}
+          onCancel={() => setContextReview(null)}
+          onConfirm={(contexts) => {
+            const pending = contextReview.pendingConversion;
+            setContextReview(null);
+            if (!pending) return;
+            void runConversion(
+              pending.text,
+              pending.saveToHistory,
+              [],
+              pending.allowSensitiveHistory,
+              contexts,
+            );
+          }}
+          previews={contextReview.previews}
         />
       )}
       {toast && <Toast {...toast} onDismiss={() => setToast(null)} />}

@@ -21,9 +21,11 @@ const defaults: AppSettings = {
 export function App() {
   const [view, setView] = useState<View>("convert");
   const [settings, setSettings] = useState<AppSettings>(defaults);
-  const [restored, setRestored] = useState<{ input: string; response: ConversionResponse } | null>(
-    null,
-  );
+  const [restored, setRestored] = useState<{
+    input: string;
+    response: ConversionResponse;
+    projectIds?: string[];
+  } | null>(null);
 
   useEffect(() => {
     void getSettings()
@@ -115,6 +117,7 @@ export function App() {
             setRestored({
               input: record.originalInput,
               response: latest.structuredData as ConversionResponse,
+              projectIds: record.projectIds,
             });
             setView("convert");
           }}

@@ -5,6 +5,8 @@ import { App } from "../../src/app/App";
 import type {
   AppSettings,
   ConversionResponse,
+  ProjectContextPreview,
+  ProjectRecord,
   SensitiveScanResult,
 } from "../../src/types/contracts";
 
@@ -14,6 +16,11 @@ const mocks = vi.hoisted(() => ({
   writeClipboardText: vi.fn(),
   scanSensitiveText: vi.fn(),
   convert: vi.fn(),
+  listProjects: vi.fn(),
+  prepareProjectContext: vi.fn(),
+  selectProjectFolder: vi.fn(),
+  setProjectPinned: vi.fn(),
+  removeProject: vi.fn(),
 }));
 
 vi.mock("../../src/lib/commands", () => ({
@@ -22,6 +29,11 @@ vi.mock("../../src/lib/commands", () => ({
   writeClipboardText: mocks.writeClipboardText,
   scanSensitiveText: mocks.scanSensitiveText,
   convert: mocks.convert,
+  listProjects: mocks.listProjects,
+  prepareProjectContext: mocks.prepareProjectContext,
+  selectProjectFolder: mocks.selectProjectFolder,
+  setProjectPinned: mocks.setProjectPinned,
+  removeProject: mocks.removeProject,
 }));
 
 const settings: AppSettings = {
@@ -82,6 +94,7 @@ describe("DualTranslation main flow", () => {
       }),
     );
     mocks.convert.mockResolvedValue(completed);
+    mocks.listProjects.mockResolvedValue([]);
   });
 
   it("switches between write and explain modes", async () => {
@@ -190,5 +203,95 @@ describe("DualTranslation main flow", () => {
     await user.click(screen.getByRole("button", { name: "一键复制" }));
 
     expect(mocks.writeClipboardText).toHaveBeenCalledWith("完全不同的结果文本", "major_edit_copy");
+  });
+
+  it("previews selected project context before sending it to the model", async () => {
+    const user = userEvent.setup();
+    const project: ProjectRecord = {
+      id: "project-1",
+      name: "FixtureProject",
+      path: "/tmp/FixtureProject",
+      pinned: true,
+      technologies: ["React", "Rust"],
+      fileCount: 42,
+      fingerprint: "abc123",
+      lastUsedAt: "2026-08-04T00:00:00Z",
+    };
+    const preview: ProjectContextPreview = {
+      projectId: project.id,
+      projectName: project.name,
+      technologies: project.technologies,
+      facts: ["检测到的技术栈：React、Rust"],
+      files: [
+        {
+          path: "src/app.tsx",
+          reason: "文件内容与当前需求匹配",
+          excerpt: "export function App() {}",
+          truncated: false,
+          redactedFindings: 0,
+        },
+      ],
+      scannedFileCount: 42,
+      ignoredFileCount: 8,
+      redactedFindings: 0,
+      fingerprint: "abc123",
+      scannedAt: "2026-08-04T00:00:00Z",
+    };
+    mocks.listProjects.mockResolvedValue([project]);
+    mocks.prepareProjectContext.mockResolvedValue([preview]);
+    render(<App />);
+
+    expect(await screen.findByText("FixtureProject")).toBeInTheDocument();
+    await user.type(screen.getByLabelText("描述你的想法"), "优化项目上下文");
+    await user.click(screen.getByRole("button", { name: /开始转换/ }));
+
+    expect(
+      await screen.findByRole("dialog", { name: "确认发送给模型的项目上下文" }),
+    ).toBeInTheDocument();
+    expect(mocks.convert).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "确认并生成" }));
+    await waitFor(() => expect(mocks.convert).toHaveBeenCalledOnce());
+    expect(mocks.convert.mock.calls[0]?.[0]).toMatchObject({
+      projectContexts: [preview],
+    });
+  });
+
+  it("carries clarification question text and prior answers into the next request", async () => {
+    const user = userEvent.setup();
+    const clarification: ConversionResponse = {
+      schemaVersion: 1,
+      kind: "clarification_required",
+      requestId: "clarify-1",
+      data: {
+        questions: [
+          {
+            id: "auth-method",
+            question: "希望使用哪一种登录方式？",
+            reason: "这会改变数据结构和安全边界。",
+            options: ["邮箱密码", "第三方登录"],
+          },
+        ],
+      },
+    };
+    mocks.convert.mockResolvedValueOnce(clarification).mockResolvedValueOnce(completed);
+    render(<App />);
+
+    await user.type(screen.getByLabelText("描述你的想法"), "增加登录功能");
+    await user.click(screen.getByRole("button", { name: /开始转换/ }));
+    const answer = await screen.findByLabelText("希望使用哪一种登录方式？");
+    await user.type(answer, "邮箱密码");
+    await user.click(screen.getByRole("button", { name: "提交答案并生成" }));
+
+    await waitFor(() => expect(mocks.convert).toHaveBeenCalledTimes(2));
+    expect(mocks.convert.mock.calls[1]?.[0]).toMatchObject({
+      clarificationAnswers: [
+        {
+          questionId: "auth-method",
+          question: "希望使用哪一种登录方式？",
+          reason: "这会改变数据结构和安全边界。",
+          answer: "邮箱密码",
+        },
+      ],
+    });
   });
 });

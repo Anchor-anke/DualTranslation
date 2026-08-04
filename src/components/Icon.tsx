@@ -12,7 +12,9 @@ export type IconName =
   | "check"
   | "warning"
   | "close"
-  | "code";
+  | "code"
+  | "folder"
+  | "pin";
 
 const paths: Record<IconName, React.ReactNode> = {
   spark: (
@@ -35,6 +37,8 @@ const paths: Record<IconName, React.ReactNode> = {
   warning: <path d="M12 3 2 21h20L12 3Zm0 6v5m0 3h.01" />,
   close: <path d="m6 6 12 12M18 6 6 18" />,
   code: <path d="m8 9-4 3 4 3m8-6 4 3-4 3m-2-9-4 12" />,
+  folder: <path d="M3 6.5h7l2 2h9v9.5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6.5Zm0 3h18" />,
+  pin: <path d="m9 3 6 6-2 2 3 3-2 2-3-3-2 2-2-2 2-2-3-3 2-2 3 3 2-2-6-6" />,
 };
 
 interface IconProps extends SVGProps<SVGSVGElement> {

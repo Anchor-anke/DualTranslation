@@ -479,6 +479,7 @@ mod tests {
             language_preference: LanguagePreference::Zh,
             generation_mode: GenerationMode::Quick,
             clarification_answers: Vec::new(),
+            project_contexts: Vec::new(),
             provider_profile_id: "mock".into(),
             save_to_history: false,
             allow_sensitive_history: false,

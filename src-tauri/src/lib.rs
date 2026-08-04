@@ -4,6 +4,7 @@ mod credentials;
 mod error;
 mod platform;
 mod privacy;
+mod project_context;
 mod providers;
 mod storage;
 mod types;
@@ -18,12 +19,20 @@ use tauri_plugin_window_state::StateFlags;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let migrations = vec![Migration {
-        version: 1,
-        description: "initial schema",
-        sql: include_str!("../migrations/001_initial.sql"),
-        kind: MigrationKind::Up,
-    }];
+    let migrations = vec![
+        Migration {
+            version: 1,
+            description: "initial schema",
+            sql: include_str!("../migrations/001_initial.sql"),
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 2,
+            description: "project context library",
+            sql: include_str!("../migrations/002_projects.sql"),
+            kind: MigrationKind::Up,
+        },
+    ];
     let window_state_flags = StateFlags::POSITION | StateFlags::SIZE | StateFlags::MAXIMIZED;
 
     tauri::Builder::default()
@@ -31,6 +40,7 @@ pub fn run() {
             let _ = platform::show_main_window(app);
         }))
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(
             tauri_plugin_window_state::Builder::default()
@@ -62,6 +72,11 @@ pub fn run() {
             commands::read_clipboard_text,
             commands::write_clipboard_text,
             commands::scan_sensitive_text,
+            commands::select_project_folder,
+            commands::list_projects,
+            commands::set_project_pinned,
+            commands::remove_project,
+            commands::prepare_project_context,
             commands::list_provider_profiles,
             commands::save_provider_profile,
             commands::test_provider_profile,

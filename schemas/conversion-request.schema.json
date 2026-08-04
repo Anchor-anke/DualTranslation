@@ -12,6 +12,7 @@
     "languagePreference",
     "generationMode",
     "clarificationAnswers",
+    "projectContexts",
     "providerProfileId",
     "saveToHistory",
     "allowSensitiveHistory"
@@ -29,15 +30,71 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["questionId", "answer"],
+        "required": ["questionId", "question", "reason", "answer"],
         "properties": {
           "questionId": { "type": "string", "minLength": 1, "maxLength": 100 },
+          "question": { "type": "string", "minLength": 1, "maxLength": 4000 },
+          "reason": { "type": "string", "maxLength": 4000 },
           "answer": { "type": "string", "minLength": 1, "maxLength": 4000 }
+        }
+      }
+    },
+    "projectContexts": {
+      "type": "array",
+      "maxItems": 3,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "projectId",
+          "projectName",
+          "technologies",
+          "facts",
+          "files",
+          "scannedFileCount",
+          "ignoredFileCount",
+          "redactedFindings",
+          "fingerprint",
+          "scannedAt"
+        ],
+        "properties": {
+          "projectId": { "type": "string", "minLength": 1, "maxLength": 128 },
+          "projectName": { "type": "string", "minLength": 1, "maxLength": 200 },
+          "technologies": { "$ref": "#/$defs/stringList" },
+          "facts": { "$ref": "#/$defs/stringList" },
+          "files": {
+            "type": "array",
+            "maxItems": 8,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["path", "reason", "excerpt", "truncated", "redactedFindings"],
+              "properties": {
+                "path": { "type": "string", "minLength": 1, "maxLength": 2000 },
+                "reason": { "type": "string", "minLength": 1, "maxLength": 1000 },
+                "excerpt": { "type": "string", "maxLength": 6000 },
+                "truncated": { "type": "boolean" },
+                "redactedFindings": { "type": "integer", "minimum": 0 }
+              }
+            }
+          },
+          "scannedFileCount": { "type": "integer", "minimum": 0 },
+          "ignoredFileCount": { "type": "integer", "minimum": 0 },
+          "redactedFindings": { "type": "integer", "minimum": 0 },
+          "fingerprint": { "type": "string", "maxLength": 128 },
+          "scannedAt": { "type": "string", "minLength": 1, "maxLength": 100 }
         }
       }
     },
     "providerProfileId": { "type": "string", "minLength": 1, "maxLength": 128 },
     "saveToHistory": { "type": "boolean" },
     "allowSensitiveHistory": { "type": "boolean" }
+  },
+  "$defs": {
+    "stringList": {
+      "type": "array",
+      "maxItems": 100,
+      "items": { "type": "string", "minLength": 1, "maxLength": 2000 }
+    }
   }
 }
