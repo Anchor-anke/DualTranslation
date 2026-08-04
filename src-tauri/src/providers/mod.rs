@@ -9,6 +9,8 @@ use std::time::Duration;
 use url::Url;
 
 const DEEPSEEK_MAX_OUTPUT_TOKENS: u32 = 8_192;
+const MAX_TRANSIENT_ATTEMPTS: usize = 3;
+const RETRY_DELAYS_MS: [u64; MAX_TRANSIENT_ATTEMPTS - 1] = [250, 750];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InferenceMode {
@@ -57,12 +59,14 @@ struct ChatResponse {
 
 #[derive(Debug, Deserialize)]
 struct ChatChoice {
+    #[serde(default)]
+    finish_reason: Option<String>,
     message: ChatResponseMessage,
 }
 
 #[derive(Debug, Deserialize)]
 struct ChatResponseMessage {
-    content: String,
+    content: Option<String>,
 }
 
 pub fn normalize_chat_completions_url(base_url: &str) -> AppResult<Url> {
@@ -107,35 +111,107 @@ pub async fn send_chat(
 ) -> AppResult<String> {
     let url = normalize_chat_completions_url(&profile.base_url)?;
     let request = build_chat_request(profile, &url, system, user, inference_mode);
+    let mut attempt = 0;
 
-    let response = client
-        .post(url)
-        .bearer_auth(api_key)
-        .timeout(Duration::from_millis(profile.timeout_ms))
-        .json(&request)
-        .send()
-        .await
-        .map_err(map_reqwest_error)?;
+    loop {
+        attempt += 1;
+        let response = client
+            .post(url.clone())
+            .bearer_auth(api_key)
+            .timeout(Duration::from_millis(profile.timeout_ms))
+            .json(&request)
+            .send()
+            .await
+            .map_err(map_reqwest_error)?;
+        let status = response.status();
 
-    if !response.status().is_success() {
-        return Err(map_status(response.status()));
+        if !status.is_success() {
+            if status.is_server_error() && attempt < MAX_TRANSIENT_ATTEMPTS {
+                retry_backoff(attempt).await;
+                continue;
+            }
+            return Err(map_status(status));
+        }
+
+        let parsed = response.json::<ChatResponse>().await.map_err(|_| {
+            AppError::new(
+                "SCHEMA_INVALID",
+                "模型服务返回了无法识别的响应。",
+                "请确认该地址兼容 OpenAI Chat Completions 协议。",
+            )
+        })?;
+        let Some(choice) = parsed.choices.into_iter().next() else {
+            return Err(AppError::new(
+                "SCHEMA_INVALID",
+                "模型服务没有返回候选结果。",
+                "请重试；如果问题持续，请切换模型服务。",
+            ));
+        };
+
+        if let Some(content) = choice
+            .message
+            .content
+            .filter(|content| !content.trim().is_empty())
+        {
+            return Ok(content);
+        }
+
+        let (retryable, error) = map_empty_content(choice.finish_reason.as_deref());
+        if retryable && attempt < MAX_TRANSIENT_ATTEMPTS {
+            retry_backoff(attempt).await;
+            continue;
+        }
+        return Err(error);
     }
+}
 
-    let parsed = response.json::<ChatResponse>().await.map_err(|_| {
-        AppError::new(
-            "SCHEMA_INVALID",
-            "模型服务返回了无法识别的响应。",
-            "请确认该地址兼容 OpenAI Chat Completions 协议。",
-        )
-    })?;
+async fn retry_backoff(attempt: usize) {
+    tokio::time::sleep(Duration::from_millis(RETRY_DELAYS_MS[attempt - 1])).await;
+}
 
-    parsed
-        .choices
-        .into_iter()
-        .next()
-        .map(|choice| choice.message.content)
-        .filter(|content| !content.trim().is_empty())
-        .ok_or_else(AppError::schema_invalid)
+fn map_empty_content(finish_reason: Option<&str>) -> (bool, AppError) {
+    match finish_reason {
+        Some("insufficient_system_resource") => (
+            true,
+            AppError::new(
+                "NETWORK_FAILED",
+                "模型服务当前推理资源不足，自动重试后仍未返回内容。",
+                "请稍后重试，或临时切换到其他模型。",
+            ),
+        ),
+        Some("content_filter") => (
+            false,
+            AppError::new(
+                "SCHEMA_INVALID",
+                "模型服务因内容安全策略未返回结果。",
+                "请调整输入内容后重试。",
+            ),
+        ),
+        Some("length") => (
+            false,
+            AppError::new(
+                "SCHEMA_INVALID",
+                "模型输出达到长度限制，未返回完整内容。",
+                "请缩短输入内容或拆分处理后重试。",
+            ),
+        ),
+        Some("tool_calls") => (
+            false,
+            AppError::new(
+                "SCHEMA_INVALID",
+                "模型服务返回了工具调用，而不是文本结果。",
+                "请切换到支持普通文本输出的模型配置。",
+            ),
+        ),
+        _ => (
+            false,
+            AppError::new(
+                "SCHEMA_INVALID",
+                "模型服务返回了空内容。",
+                "请重试；如果问题持续，请切换模型服务。",
+            ),
+        ),
+    }
 }
 
 fn build_chat_request<'a>(
@@ -332,19 +408,35 @@ mod tests {
     }
 
     async fn mock_chat_sequence(contents: Vec<String>) -> String {
+        let responses = contents
+            .into_iter()
+            .map(|content| {
+                (
+                    200,
+                    json!({
+                        "choices": [{
+                            "finish_reason": "stop",
+                            "message": { "content": content }
+                        }]
+                    })
+                    .to_string(),
+                )
+            })
+            .collect();
+        mock_http_sequence(responses).await
+    }
+
+    async fn mock_http_sequence(responses: Vec<(u16, String)>) -> String {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         tokio::spawn(async move {
-            for content in contents {
+            for (status, body) in responses {
                 let (mut stream, _) = listener.accept().await.unwrap();
                 let mut request = vec![0; 16 * 1024];
                 let _ = stream.read(&mut request).await.unwrap();
-                let body = json!({
-                    "choices": [{ "message": { "content": content } }]
-                })
-                .to_string();
+                let reason = if status == 200 { "OK" } else { "Error" };
                 let response = format!(
-                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
                     body.len()
                 );
                 stream.write_all(response.as_bytes()).await.unwrap();
@@ -505,6 +597,118 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(output, r#"{"kind":"ok"}"#);
+    }
+
+    #[tokio::test]
+    async fn retries_resource_shortage_then_accepts_content() {
+        let unavailable = json!({
+            "choices": [{
+                "finish_reason": "insufficient_system_resource",
+                "message": { "content": null }
+            }]
+        })
+        .to_string();
+        let success = json!({
+            "choices": [{
+                "finish_reason": "stop",
+                "message": { "content": "{\"kind\":\"ok\"}" }
+            }]
+        })
+        .to_string();
+        let base_url = mock_http_sequence(vec![(200, unavailable), (200, success)]).await;
+
+        let output = send_chat(
+            &Client::new(),
+            &profile(base_url, 1_000),
+            "test-key",
+            "system",
+            "user",
+            InferenceMode::Fast,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(output, r#"{"kind":"ok"}"#);
+    }
+
+    #[tokio::test]
+    async fn reports_resource_shortage_after_bounded_retries() {
+        let unavailable = json!({
+            "choices": [{
+                "finish_reason": "insufficient_system_resource",
+                "message": { "content": null }
+            }]
+        })
+        .to_string();
+        let base_url = mock_http_sequence(vec![
+            (200, unavailable.clone()),
+            (200, unavailable.clone()),
+            (200, unavailable),
+        ])
+        .await;
+
+        let error = send_chat(
+            &Client::new(),
+            &profile(base_url, 1_000),
+            "test-key",
+            "system",
+            "user",
+            InferenceMode::Fast,
+        )
+        .await
+        .unwrap_err();
+
+        assert_eq!(error.code, "NETWORK_FAILED");
+        assert!(error.message.contains("自动重试"));
+    }
+
+    #[tokio::test]
+    async fn retries_transient_server_error_then_accepts_content() {
+        let success = json!({
+            "choices": [{
+                "finish_reason": "stop",
+                "message": { "content": "ok" }
+            }]
+        })
+        .to_string();
+        let base_url =
+            mock_http_sequence(vec![(503, r#"{"error":"busy"}"#.into()), (200, success)]).await;
+
+        let output = send_chat(
+            &Client::new(),
+            &profile(base_url, 1_000),
+            "test-key",
+            "system",
+            "user",
+            InferenceMode::Fast,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(output, "ok");
+    }
+
+    #[tokio::test]
+    async fn reports_content_filter_without_retrying() {
+        let base_url = mock_chat_server(
+            200,
+            r#"{"choices":[{"finish_reason":"content_filter","message":{"content":null}}]}"#,
+            Duration::ZERO,
+        )
+        .await;
+        let error = send_chat(
+            &Client::new(),
+            &profile(base_url, 1_000),
+            "test-key",
+            "system",
+            "user",
+            InferenceMode::Fast,
+        )
+        .await
+        .unwrap_err();
+
+        assert_eq!(error.code, "SCHEMA_INVALID");
+        assert!(error.message.contains("内容安全策略"));
     }
 
     #[tokio::test]

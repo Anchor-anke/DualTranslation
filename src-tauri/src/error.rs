@@ -22,9 +22,9 @@ impl AppError {
         }
     }
 
-    pub fn internal(context: impl Display) -> Self {
+    pub fn internal(_context: impl Display) -> Self {
         #[cfg(debug_assertions)]
-        eprintln!("DualTranslation internal error: {context}");
+        eprintln!("DualTranslation internal error: {_context}");
 
         Self::new(
             "INTERNAL_ERROR",

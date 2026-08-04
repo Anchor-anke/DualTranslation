@@ -66,7 +66,13 @@ jobs:
           tagName: v__VERSION__
           releaseName: DualTranslation v__VERSION__
           releaseBody: |
-            DualTranslation 首个桌面版本。
+            DualTranslation v__VERSION__ 提升了模型服务响应的兼容性与稳定性。
+
+            本次更新：
+            - 兼容 DeepSeek/OpenAI Chat Completions 返回的空 `content`。
+            - 根据 `finish_reason` 区分资源不足、内容过滤和输出截断。
+            - 对临时 HTTP 5xx 与推理资源不足执行有限退避重试。
+            - 保持 API Key 仅存储在操作系统凭据库中。
 
             下载说明：
             - Windows 10/11 x64：下载 `.msi` 或 `-setup.exe`。
