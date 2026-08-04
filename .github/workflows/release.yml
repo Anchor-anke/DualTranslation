@@ -85,6 +85,17 @@ jobs:
             本版本尚未配置商业代码签名。安装时 macOS Gatekeeper 或 Windows SmartScreen 可能提示未知开发者，请确认文件来自本 Release 页面后再继续。
 
             API Key 只保存在操作系统凭据库中，不包含在应用安装包、源码或 Release 附件内。
-          releaseDraft: false
+          releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}
+
+  finalize:
+    name: Publish completed release
+    needs: publish
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Publish release after every installer is uploaded
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release edit "${GITHUB_REF_NAME}" --draft=false --repo "${GITHUB_REPOSITORY}"
