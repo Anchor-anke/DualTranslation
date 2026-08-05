@@ -22,6 +22,9 @@ const statusLabels = {
   unclear: "无法判断",
 } as const;
 
+const beginnerFriendlyDecision =
+  "我不确定，请根据我的目标和已有项目内容，选择风险较低、容易维护、适合新手的常见方案。请明确记录你的选择；如果涉及付费、隐私、安全或不可逆操作，请不要替我决定。";
+
 export function ResultPanel({
   response,
   onCopy,
@@ -245,65 +248,131 @@ function ClarificationForm({
   onSubmit: (answers: ClarificationAnswer[]) => Promise<void>;
 }) {
   const [answers, setAnswers] = useState<Record<string, string>>({});
+  const [customAnswerIds, setCustomAnswerIds] = useState<string[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const complete = response.data.questions.every((question) => answers[question.id]?.trim());
 
+  function submitWith(answerFor: (questionId: string) => string): void {
+    setSubmitting(true);
+    void onSubmit(
+      response.data.questions.map((question) => ({
+        questionId: question.id,
+        question: question.question,
+        reason: question.reason,
+        answer: answerFor(question.id),
+      })),
+    ).finally(() => setSubmitting(false));
+  }
+
   return (
     <section className="result-card clarification-card" aria-live="polite">
-      <p className="eyebrow">需要确认 · 最多 3 项</p>
-      <h2>这些答案会显著改变交付结果</h2>
+      <p className="eyebrow">还差一点信息 · 不懂技术也能选</p>
+      <h2>你只需要决定想要的效果</h2>
+      <p className="clarification-card__intro">
+        不需要研究编程工具。看得懂就选，拿不准的技术细节可以直接交给我。
+      </p>
+
+      <div className="clarification-recommendation">
+        <div>
+          <strong>拿不准？我可以替你选</strong>
+          <p>优先使用容易上手、风险较低、方便以后修改的常见方案。</p>
+        </div>
+        <button
+          className="button button--primary"
+          disabled={submitting}
+          onClick={() => submitWith(() => beginnerFriendlyDecision)}
+          type="button"
+        >
+          {submitting ? "正在生成…" : "按推荐方案继续"}
+        </button>
+      </div>
+
+      <div className="clarification-divider">
+        <span>或者逐项选择</span>
+      </div>
       <ol>
-        {response.data.questions.map((question) => (
+        {response.data.questions.map((question, index) => (
           <li key={question.id}>
-            <label htmlFor={`clarification-${question.id}`}>
-              <strong>{question.question}</strong>
-            </label>
-            <p>{question.reason}</p>
-            {question.options.length > 0 && (
-              <div className="option-chips">
-                {question.options.map((option) => (
-                  <button
-                    className={answers[question.id] === option ? "selected" : ""}
-                    key={option}
-                    onClick={() => setAnswers((current) => ({ ...current, [question.id]: option }))}
-                    type="button"
-                  >
-                    {option}
-                  </button>
-                ))}
-              </div>
+            <span className="clarification-question__number">问题 {index + 1}</span>
+            <strong className="clarification-question__title">{question.question}</strong>
+            <p className="clarification-question__reason">为什么要问：{question.reason}</p>
+            <div className="option-chips" role="group" aria-label={question.question}>
+              {question.options.map((option) => (
+                <button
+                  aria-pressed={answers[question.id] === option}
+                  className={answers[question.id] === option ? "selected" : ""}
+                  key={option}
+                  onClick={() => {
+                    setAnswers((current) => ({ ...current, [question.id]: option }));
+                    setCustomAnswerIds((current) => current.filter((id) => id !== question.id));
+                  }}
+                  type="button"
+                >
+                  {option}
+                </button>
+              ))}
+              <button
+                aria-pressed={answers[question.id] === beginnerFriendlyDecision}
+                className={`option-chips__recommended${
+                  answers[question.id] === beginnerFriendlyDecision ? " selected" : ""
+                }`}
+                onClick={() => {
+                  setAnswers((current) => ({
+                    ...current,
+                    [question.id]: beginnerFriendlyDecision,
+                  }));
+                  setCustomAnswerIds((current) => current.filter((id) => id !== question.id));
+                }}
+                type="button"
+              >
+                不确定，帮我选 <em>推荐</em>
+              </button>
+            </div>
+            <button
+              aria-expanded={customAnswerIds.includes(question.id)}
+              className="clarification-custom-toggle"
+              onClick={() => {
+                const opening = !customAnswerIds.includes(question.id);
+                setCustomAnswerIds((current) =>
+                  opening ? [...current, question.id] : current.filter((id) => id !== question.id),
+                );
+                if (opening) {
+                  setAnswers((current) => ({ ...current, [question.id]: "" }));
+                }
+              }}
+              type="button"
+            >
+              都不合适？用自己的话说
+            </button>
+            {customAnswerIds.includes(question.id) && (
+              <textarea
+                aria-label={`${question.question}的补充说明`}
+                autoFocus
+                id={`clarification-${question.id}`}
+                maxLength={4_000}
+                onChange={(event) =>
+                  setAnswers((current) => ({ ...current, [question.id]: event.target.value }))
+                }
+                placeholder="不用写技术名词，例如：我希望用户打开网页就能用"
+                value={
+                  answers[question.id] === beginnerFriendlyDecision
+                    ? ""
+                    : (answers[question.id] ?? "")
+                }
+              />
             )}
-            <textarea
-              id={`clarification-${question.id}`}
-              maxLength={4_000}
-              onChange={(event) =>
-                setAnswers((current) => ({ ...current, [question.id]: event.target.value }))
-              }
-              placeholder="输入你的答案"
-              value={answers[question.id] ?? ""}
-            />
           </li>
         ))}
       </ol>
       <div className="clarification-card__actions">
-        <span>回答只用于当前任务；提交前仍会进行本地敏感检查。</span>
+        <span>可以混合选择：知道的自己选，不确定的交给我。</span>
         <button
           className="button button--primary"
           disabled={!complete || submitting}
-          onClick={() => {
-            setSubmitting(true);
-            void onSubmit(
-              response.data.questions.map((question) => ({
-                questionId: question.id,
-                question: question.question,
-                reason: question.reason,
-                answer: answers[question.id]?.trim() ?? "",
-              })),
-            ).finally(() => setSubmitting(false));
-          }}
+          onClick={() => submitWith((questionId) => answers[questionId]?.trim() ?? "")}
           type="button"
         >
-          {submitting ? "正在生成…" : "提交答案并生成"}
+          {submitting ? "正在生成…" : "用这些选择继续"}
         </button>
       </div>
     </section>

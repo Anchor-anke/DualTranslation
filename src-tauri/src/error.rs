@@ -40,6 +40,14 @@ impl AppError {
             "请重试，或切换到结构化输出更稳定的模型。",
         )
     }
+
+    pub fn provider_schema_invalid() -> Self {
+        Self::new(
+            "SCHEMA_INVALID",
+            "模型服务连续返回了不完整或无法识别的响应。",
+            "请稍后重试；如果问题持续，请在设置中测试连接并检查模型服务状态。",
+        )
+    }
 }
 
 impl Display for AppError {
