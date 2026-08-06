@@ -101,29 +101,31 @@ export function App() {
         </button>
       </header>
 
-      {view === "convert" && (
-        <ConversionWorkbench
-          key={restored?.response.requestId ?? "new-conversion"}
-          onOpenSettings={() => setView("settings")}
-          restored={restored}
-          settings={settings}
-        />
-      )}
-      {view === "history" && (
-        <HistoryView
-          onRestore={(record: HistoryRecord) => {
-            const latest = record.versions.at(-1);
-            if (!latest) return;
-            setRestored({
-              input: record.originalInput,
-              response: latest.structuredData as ConversionResponse,
-              projectIds: record.projectIds,
-            });
-            setView("convert");
-          }}
-        />
-      )}
-      {view === "settings" && <SettingsView onSettingsChange={setSettings} settings={settings} />}
+      <div className="app-content">
+        {view === "convert" && (
+          <ConversionWorkbench
+            key={restored?.response.requestId ?? "new-conversion"}
+            onOpenSettings={() => setView("settings")}
+            restored={restored}
+            settings={settings}
+          />
+        )}
+        {view === "history" && (
+          <HistoryView
+            onRestore={(record: HistoryRecord) => {
+              const latest = record.versions.at(-1);
+              if (!latest) return;
+              setRestored({
+                input: record.originalInput,
+                response: latest.structuredData as ConversionResponse,
+                projectIds: record.projectIds,
+              });
+              setView("convert");
+            }}
+          />
+        )}
+        {view === "settings" && <SettingsView onSettingsChange={setSettings} settings={settings} />}
+      </div>
     </div>
   );
 }

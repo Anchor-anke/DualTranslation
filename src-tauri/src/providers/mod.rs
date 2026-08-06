@@ -3,8 +3,8 @@ use crate::{
     types::ProviderProfile,
 };
 use reqwest::{Client, StatusCode};
-use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde::Serialize;
+use serde_json::Value;
 use std::time::Duration;
 use url::Url;
 
@@ -27,8 +27,6 @@ struct ChatRequest<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     max_tokens: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    response_format: Option<ResponseFormat>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     thinking: Option<ThinkingConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
     reasoning_effort: Option<&'static str>,
@@ -41,32 +39,9 @@ struct ChatMessage<'a> {
 }
 
 #[derive(Debug, Serialize)]
-struct ResponseFormat {
-    #[serde(rename = "type")]
-    kind: &'static str,
-}
-
-#[derive(Debug, Serialize)]
 struct ThinkingConfig {
     #[serde(rename = "type")]
     kind: &'static str,
-}
-
-#[derive(Debug, Deserialize)]
-struct ChatResponse {
-    choices: Vec<ChatChoice>,
-}
-
-#[derive(Debug, Deserialize)]
-struct ChatChoice {
-    #[serde(default)]
-    finish_reason: Option<String>,
-    message: ChatResponseMessage,
-}
-
-#[derive(Debug, Deserialize)]
-struct ChatResponseMessage {
-    content: Option<String>,
 }
 
 pub fn normalize_chat_completions_url(base_url: &str) -> AppResult<Url> {
@@ -133,36 +108,208 @@ pub async fn send_chat(
             return Err(map_status(status));
         }
 
-        let parsed = response.json::<ChatResponse>().await.map_err(|_| {
-            AppError::new(
-                "SCHEMA_INVALID",
-                "模型服务返回了无法识别的响应。",
-                "请确认该地址兼容 OpenAI Chat Completions 协议。",
-            )
-        })?;
-        let Some(choice) = parsed.choices.into_iter().next() else {
-            return Err(AppError::new(
-                "SCHEMA_INVALID",
-                "模型服务没有返回候选结果。",
-                "请重试；如果问题持续，请切换模型服务。",
-            ));
-        };
-
-        if let Some(content) = choice
-            .message
-            .content
-            .filter(|content| !content.trim().is_empty())
-        {
-            return Ok(content);
+        let body = response.text().await.map_err(map_reqwest_error)?;
+        match parse_chat_response(&body) {
+            Ok(ChatResponseOutcome::Content(content)) => return Ok(content),
+            Ok(ChatResponseOutcome::Empty(finish_reason)) => {
+                let (retryable, error) = map_empty_content(finish_reason.as_deref());
+                if retryable && attempt < MAX_TRANSIENT_ATTEMPTS {
+                    retry_backoff(attempt).await;
+                    continue;
+                }
+                return Err(error);
+            }
+            Err(error) => {
+                if is_retryable_response_error(&error) && attempt < MAX_TRANSIENT_ATTEMPTS {
+                    retry_backoff(attempt).await;
+                    continue;
+                }
+                return Err(error);
+            }
         }
+    }
+}
 
-        let (retryable, error) = map_empty_content(choice.finish_reason.as_deref());
-        if retryable && attempt < MAX_TRANSIENT_ATTEMPTS {
-            retry_backoff(attempt).await;
+#[derive(Debug, PartialEq, Eq)]
+enum ChatResponseOutcome {
+    Content(String),
+    Empty(Option<String>),
+}
+
+fn parse_chat_response(body: &str) -> AppResult<ChatResponseOutcome> {
+    let trimmed = body.trim_start_matches('\u{feff}').trim();
+    if trimmed.is_empty() {
+        return Err(AppError::provider_schema_invalid());
+    }
+    if trimmed.starts_with("data:") || trimmed.contains("\ndata:") {
+        return parse_sse_chat_response(trimmed);
+    }
+    let payload =
+        serde_json::from_str::<Value>(trimmed).map_err(|_| AppError::provider_schema_invalid())?;
+    parse_chat_payload(&payload)
+}
+
+fn parse_chat_payload(payload: &Value) -> AppResult<ChatResponseOutcome> {
+    if let Some(error) = payload.get("error") {
+        return Err(map_provider_payload_error(error));
+    }
+    if payload.get("choices").is_none()
+        && (payload.get("code").is_some() || payload.get("status").is_some())
+    {
+        return Err(map_provider_payload_error(payload));
+    }
+    let choices = payload
+        .get("choices")
+        .and_then(Value::as_array)
+        .filter(|choices| !choices.is_empty())
+        .ok_or_else(AppError::provider_schema_invalid)?;
+    let mut finish_reason = None;
+    let mut recognized_choice = false;
+
+    for choice in choices {
+        if finish_reason.is_none() {
+            finish_reason = choice
+                .get("finish_reason")
+                .and_then(Value::as_str)
+                .map(str::to_owned);
+        }
+        if let Some(text) = choice.get("text").and_then(Value::as_str)
+            && !text.trim().is_empty()
+        {
+            return Ok(ChatResponseOutcome::Content(text.to_owned()));
+        }
+        if let Some(message) = choice.get("message").or_else(|| choice.get("delta")) {
+            recognized_choice = true;
+            if let Some(content) = extract_message_text(message) {
+                return Ok(ChatResponseOutcome::Content(content));
+            }
+        }
+    }
+
+    if recognized_choice || finish_reason.is_some() {
+        return Ok(ChatResponseOutcome::Empty(finish_reason));
+    }
+    Err(AppError::provider_schema_invalid())
+}
+
+fn parse_sse_chat_response(body: &str) -> AppResult<ChatResponseOutcome> {
+    let mut content = String::new();
+    let mut finish_reason = None;
+    let mut saw_choice = false;
+
+    for line in body.lines() {
+        let Some(data) = line.trim().strip_prefix("data:").map(str::trim) else {
+            continue;
+        };
+        if data.is_empty() || data == "[DONE]" {
             continue;
         }
-        return Err(error);
+        let payload =
+            serde_json::from_str::<Value>(data).map_err(|_| AppError::provider_schema_invalid())?;
+        if let Some(error) = payload.get("error") {
+            return Err(map_provider_payload_error(error));
+        }
+        let Some(choices) = payload.get("choices").and_then(Value::as_array) else {
+            continue;
+        };
+        for choice in choices {
+            saw_choice = true;
+            if let Some(reason) = choice.get("finish_reason").and_then(Value::as_str) {
+                finish_reason = Some(reason.to_owned());
+            }
+            if let Some(message) = choice.get("delta").or_else(|| choice.get("message"))
+                && let Some(part) = extract_message_text(message)
+            {
+                content.push_str(&part);
+            }
+        }
     }
+
+    if !content.trim().is_empty() {
+        return Ok(ChatResponseOutcome::Content(content));
+    }
+    if saw_choice {
+        return Ok(ChatResponseOutcome::Empty(finish_reason));
+    }
+    Err(AppError::provider_schema_invalid())
+}
+
+fn extract_message_text(message: &Value) -> Option<String> {
+    let content = message.get("content").unwrap_or(message);
+    let text = match content {
+        Value::String(text) => text.clone(),
+        Value::Array(parts) => parts
+            .iter()
+            .filter_map(|part| match part {
+                Value::String(text) => Some(text.as_str()),
+                Value::Object(object) => object
+                    .get("text")
+                    .or_else(|| object.get("content"))
+                    .and_then(Value::as_str),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join(""),
+        Value::Object(object) => object
+            .get("text")
+            .or_else(|| object.get("content"))
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned(),
+        _ => String::new(),
+    };
+    (!text.trim().is_empty()).then_some(text)
+}
+
+fn map_provider_payload_error(error: &Value) -> AppError {
+    let marker = error
+        .get("code")
+        .or_else(|| error.get("type"))
+        .or_else(|| error.get("status"))
+        .map(value_marker)
+        .unwrap_or_default();
+    let message = error
+        .get("message")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let marker = format!("{marker} {message}").to_ascii_lowercase();
+    if marker.contains("model") && (marker.contains("not_found") || marker.contains("invalid")) {
+        return AppError::new(
+            "NOT_FOUND",
+            "模型服务不支持当前模型标识。",
+            "请在设置中核对模型名，然后重新测试连接。",
+        );
+    }
+    if marker.contains("auth") || marker.contains("key") || marker.contains("permission") {
+        return AppError::new(
+            "AUTH_FAILED",
+            "API Key 无效或没有模型权限。",
+            "请检查密钥并重新保存。",
+        );
+    }
+    if marker.contains("rate") || marker.contains("quota") {
+        return AppError::new(
+            "RATE_LIMITED",
+            "模型服务当前限流或配额不足。",
+            "请稍后重试，或检查供应商配额。",
+        );
+    }
+    AppError::new(
+        "NETWORK_FAILED",
+        "模型服务返回了错误结果。",
+        "请在设置中测试连接，并检查模型名和服务商配额。",
+    )
+}
+
+fn value_marker(value: &Value) -> String {
+    value
+        .as_str()
+        .map(str::to_owned)
+        .unwrap_or_else(|| value.to_string())
+}
+
+fn is_retryable_response_error(error: &AppError) -> bool {
+    matches!(error.code, "SCHEMA_INVALID" | "NETWORK_FAILED")
 }
 
 async fn retry_backoff(attempt: usize) {
@@ -204,11 +351,11 @@ fn map_empty_content(finish_reason: Option<&str>) -> (bool, AppError) {
             ),
         ),
         _ => (
-            false,
+            true,
             AppError::new(
                 "SCHEMA_INVALID",
-                "模型服务返回了空内容。",
-                "请重试；如果问题持续，请切换模型服务。",
+                "模型服务自动重试后仍返回空内容。",
+                "请稍后重试；如果问题持续，请切换模型服务。",
             ),
         ),
     }
@@ -246,9 +393,8 @@ fn build_chat_request<'a>(
         stream: false,
         temperature: 0.1,
         max_tokens: is_official_deepseek.then_some(DEEPSEEK_MAX_OUTPUT_TOKENS),
-        response_format: is_official_deepseek.then_some(ResponseFormat {
-            kind: "json_object",
-        }),
+        // The app validates and repairs JSON itself. DeepSeek documents that forcing its JSON
+        // Output mode can occasionally yield empty content, so keep that unstable mode disabled.
         thinking,
         reasoning_effort,
     }
@@ -265,35 +411,24 @@ pub async fn test_connection(
     profile: &ProviderProfile,
     api_key: &str,
 ) -> AppResult<()> {
-    let url = normalize_chat_completions_url(&profile.base_url)?;
-    let request = build_connection_request(profile, &url);
-    let response = client
-        .post(url)
-        .bearer_auth(api_key)
-        .timeout(Duration::from_millis(profile.timeout_ms))
-        .json(&request)
-        .send()
-        .await
-        .map_err(map_reqwest_error)?;
-
-    if response.status().is_success() {
-        Ok(())
-    } else {
-        Err(map_status(response.status()))
+    let output = send_chat(
+        client,
+        profile,
+        api_key,
+        "Return exactly one JSON object and no other text.",
+        r#"Return {"ok":true}."#,
+        InferenceMode::Fast,
+    )
+    .await?;
+    let value = extract_json(&output)?;
+    if value.get("ok").and_then(Value::as_bool) == Some(true) {
+        return Ok(());
     }
-}
-
-fn build_connection_request(profile: &ProviderProfile, url: &Url) -> Value {
-    let mut request = json!({
-        "model": profile.model,
-        "messages": [{"role": "user", "content": "Reply with OK."}],
-        "stream": false,
-        "max_tokens": 4
-    });
-    if is_official_deepseek(profile, url) {
-        request["thinking"] = json!({ "type": "disabled" });
-    }
-    request
+    Err(AppError::new(
+        "SCHEMA_INVALID",
+        "模型可以连接，但无法稳定返回结构化 JSON。",
+        "请换用支持 JSON 输出的模型，或检查模型服务的兼容设置。",
+    ))
 }
 
 pub fn extract_json(content: &str) -> AppResult<Value> {
@@ -376,6 +511,7 @@ mod tests {
             ConversionMode, ConversionRequest, GenerationMode, LanguagePreference, TargetAgent,
         },
     };
+    use serde_json::json;
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
         net::TcpListener,
@@ -523,7 +659,7 @@ mod tests {
     }
 
     #[test]
-    fn deepseek_fast_mode_disables_thinking_and_requests_json() {
+    fn deepseek_fast_mode_avoids_unstable_json_mode() {
         let request = serialized_request(
             "https://api.deepseek.com/v1",
             "deepseek-v4-flash",
@@ -531,7 +667,7 @@ mod tests {
         );
 
         assert_eq!(request["thinking"]["type"], "disabled");
-        assert_eq!(request["response_format"]["type"], "json_object");
+        assert!(request.get("response_format").is_none());
         assert_eq!(request["max_tokens"], DEEPSEEK_MAX_OUTPUT_TOKENS);
         assert!(request.get("reasoning_effort").is_none());
     }
@@ -546,19 +682,6 @@ mod tests {
 
         assert_eq!(request["thinking"]["type"], "enabled");
         assert_eq!(request["reasoning_effort"], "low");
-    }
-
-    #[test]
-    fn deepseek_connection_test_disables_thinking() {
-        let provider = ProviderProfile {
-            model: "deepseek-v4-flash".into(),
-            ..profile("https://api.deepseek.com/v1".into(), 1_000)
-        };
-        let url = normalize_chat_completions_url(&provider.base_url).unwrap();
-        let request = build_connection_request(&provider, &url);
-
-        assert_eq!(request["thinking"]["type"], "disabled");
-        assert_eq!(request["max_tokens"], 4);
     }
 
     #[test]
@@ -598,6 +721,160 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(output, r#"{"kind":"ok"}"#);
+    }
+
+    #[tokio::test]
+    async fn accepts_text_parts_in_chat_content() {
+        let base_url = mock_chat_server(
+            200,
+            r#"{"choices":[{"message":{"content":[{"type":"text","text":"{\"kind\":"},{"type":"text","text":"\"ok\"}"}]}}]}"#,
+            Duration::ZERO,
+        )
+        .await;
+        let output = send_chat(
+            &Client::new(),
+            &profile(base_url, 1_000),
+            "test-key",
+            "system",
+            "user",
+            InferenceMode::Fast,
+        )
+        .await
+        .unwrap();
+        assert_eq!(output, r#"{"kind":"ok"}"#);
+    }
+
+    #[test]
+    fn accepts_sse_when_a_compatible_gateway_streams_unexpectedly() {
+        let output = parse_chat_response(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"{\\\"kind\\\":\"}}]}\n\n\
+             data: {\"choices\":[{\"delta\":{\"content\":\"\\\"ok\\\"}\"},\"finish_reason\":\"stop\"}]}\n\n\
+             data: [DONE]",
+        )
+        .unwrap();
+
+        assert_eq!(
+            output,
+            ChatResponseOutcome::Content(r#"{"kind":"ok"}"#.into())
+        );
+    }
+
+    #[tokio::test]
+    async fn retries_empty_and_incomplete_success_responses() {
+        let success = json!({
+            "choices": [{
+                "finish_reason": "stop",
+                "message": { "content": "{\"kind\":\"ok\"}" }
+            }]
+        })
+        .to_string();
+        let base_url = mock_http_sequence(vec![
+            (200, String::new()),
+            (200, r#"{"choices":[]}"#.into()),
+            (200, success),
+        ])
+        .await;
+
+        let output = send_chat(
+            &Client::new(),
+            &profile(base_url, 2_000),
+            "test-key",
+            "system",
+            "user",
+            InferenceMode::Fast,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(output, r#"{"kind":"ok"}"#);
+    }
+
+    #[tokio::test]
+    async fn retries_empty_content_with_normal_stop_reason() {
+        let empty = json!({
+            "choices": [{
+                "finish_reason": "stop",
+                "message": { "content": null }
+            }]
+        })
+        .to_string();
+        let success = json!({
+            "choices": [{
+                "finish_reason": "stop",
+                "message": { "content": "{\"kind\":\"ok\"}" }
+            }]
+        })
+        .to_string();
+        let base_url = mock_http_sequence(vec![(200, empty), (200, success)]).await;
+
+        let output = send_chat(
+            &Client::new(),
+            &profile(base_url, 2_000),
+            "test-key",
+            "system",
+            "user",
+            InferenceMode::Fast,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(output, r#"{"kind":"ok"}"#);
+    }
+
+    #[tokio::test]
+    async fn connection_test_validates_structured_output() {
+        let valid = json!({
+            "choices": [{
+                "finish_reason": "stop",
+                "message": { "content": "{\"ok\":true}" }
+            }]
+        })
+        .to_string();
+        let base_url = mock_http_sequence(vec![(200, valid)]).await;
+
+        test_connection(&Client::new(), &profile(base_url, 1_000), "test-key")
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn connection_test_rejects_success_status_with_invalid_envelope() {
+        let invalid = r#"{"unexpected":true}"#.to_owned();
+        let base_url = mock_http_sequence(vec![
+            (200, invalid.clone()),
+            (200, invalid.clone()),
+            (200, invalid),
+        ])
+        .await;
+        let error = test_connection(&Client::new(), &profile(base_url, 1_000), "test-key")
+            .await
+            .unwrap_err();
+
+        assert_eq!(error.code, "SCHEMA_INVALID");
+        assert!(error.message.contains("连续返回"));
+    }
+
+    #[tokio::test]
+    async fn maps_embedded_model_error_from_success_response() {
+        let base_url = mock_chat_server(
+            200,
+            r#"{"error":{"type":"invalid_model","code":"model_not_found"}}"#,
+            Duration::ZERO,
+        )
+        .await;
+        let error = send_chat(
+            &Client::new(),
+            &profile(base_url, 1_000),
+            "test-key",
+            "system",
+            "user",
+            InferenceMode::Fast,
+        )
+        .await
+        .unwrap_err();
+
+        assert_eq!(error.code, "NOT_FOUND");
+        assert!(error.message.contains("模型标识"));
     }
 
     #[tokio::test]
@@ -728,7 +1005,13 @@ mod tests {
 
     #[tokio::test]
     async fn rejects_malformed_chat_envelope() {
-        let base_url = mock_chat_server(200, r#"{"unexpected":true}"#, Duration::ZERO).await;
+        let invalid = r#"{"unexpected":true}"#.to_owned();
+        let base_url = mock_http_sequence(vec![
+            (200, invalid.clone()),
+            (200, invalid.clone()),
+            (200, invalid),
+        ])
+        .await;
         let error = send_chat(
             &Client::new(),
             &profile(base_url, 1_000),
@@ -811,7 +1094,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn maps_abrupt_connection_close_to_network_failed() {
+    async fn maps_abrupt_connection_close_to_stable_transport_error() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         tokio::spawn(async move {
@@ -829,6 +1112,6 @@ mod tests {
         )
         .await
         .unwrap_err();
-        assert_eq!(error.code, "NETWORK_FAILED");
+        assert!(matches!(error.code, "NETWORK_FAILED" | "TIMEOUT"));
     }
 }

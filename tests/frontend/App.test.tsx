@@ -278,9 +278,9 @@ describe("DualTranslation main flow", () => {
 
     await user.type(screen.getByLabelText("描述你的想法"), "增加登录功能");
     await user.click(screen.getByRole("button", { name: /开始转换/ }));
-    const answer = await screen.findByLabelText("希望使用哪一种登录方式？");
-    await user.type(answer, "邮箱密码");
-    await user.click(screen.getByRole("button", { name: "提交答案并生成" }));
+    await screen.findByRole("heading", { name: "你只需要决定想要的效果" });
+    await user.click(screen.getByRole("button", { name: "邮箱密码" }));
+    await user.click(screen.getByRole("button", { name: "用这些选择继续" }));
 
     await waitFor(() => expect(mocks.convert).toHaveBeenCalledTimes(2));
     expect(mocks.convert.mock.calls[1]?.[0]).toMatchObject({
@@ -293,5 +293,42 @@ describe("DualTranslation main flow", () => {
         },
       ],
     });
+  });
+
+  it("lets beginners delegate all technical decisions with one click", async () => {
+    const user = userEvent.setup();
+    const clarification: ConversionResponse = {
+      schemaVersion: 1,
+      kind: "clarification_required",
+      requestId: "clarify-beginner",
+      data: {
+        questions: [
+          {
+            id: "platform",
+            question: "希望用户在哪里打开它？",
+            reason: "这会影响最终的使用方式。",
+            options: ["浏览器", "电脑应用"],
+          },
+          {
+            id: "storage",
+            question: "内容需要保存在不同设备之间吗？",
+            reason: "这会影响是否需要账号。",
+            options: ["只保存在当前设备", "多设备同步"],
+          },
+        ],
+      },
+    };
+    mocks.convert.mockResolvedValueOnce(clarification).mockResolvedValueOnce(completed);
+    render(<App />);
+
+    await user.type(screen.getByLabelText("描述你的想法"), "做一个简单工具");
+    await user.click(screen.getByRole("button", { name: /开始转换/ }));
+    await user.click(await screen.findByRole("button", { name: "按推荐方案继续" }));
+
+    await waitFor(() => expect(mocks.convert).toHaveBeenCalledTimes(2));
+    const answers = mocks.convert.mock.calls[1]?.[0].clarificationAnswers;
+    expect(answers).toHaveLength(2);
+    expect(answers[0].answer).toContain("适合新手");
+    expect(answers[1].answer).toContain("适合新手");
   });
 });

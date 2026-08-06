@@ -74,13 +74,15 @@ summary:focus-visible {
 
 .app-shell {
   height: 100%;
-  overflow-x: hidden;
-  overflow-y: auto;
+  min-height: 0;
+  overflow: hidden;
   border: 1px solid rgba(24, 55, 42, 0.16);
   border-radius: 24px;
   background:
     radial-gradient(circle at 88% 8%, rgba(93, 166, 134, 0.18), transparent 27%),
     linear-gradient(145deg, #f6f8f4 0%, #eaf1ed 100%);
+  display: grid;
+  grid-template-rows: 54px minmax(0, 1fr);
 }
 .app-header {
   position: relative;
@@ -92,9 +94,14 @@ summary:focus-visible {
   display: grid;
   grid-template-columns: 1fr auto auto auto;
   align-items: center;
-  position: sticky;
-  top: 0;
   z-index: 20;
+}
+.app-content {
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
 }
 .app-header__drag-handle {
   position: absolute;
@@ -878,36 +885,130 @@ input {
   margin-bottom: 9px;
 }
 .clarification-card ol {
-  padding-left: 22px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
   display: grid;
-  gap: 17px;
+  gap: 12px;
 }
 .clarification-card li {
-  padding-left: 5px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fbfbf7;
 }
-.clarification-card li p {
-  margin: 5px 0;
+.clarification-card__intro {
+  margin: 8px 0 18px;
   color: var(--muted);
   font-size: 12px;
 }
-.option-chips {
+.clarification-recommendation {
+  margin-bottom: 18px;
+  padding: 14px 16px;
+  border: 1px solid #b8d8ca;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #edf8f3, #f7fbf8);
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.clarification-recommendation strong {
+  color: var(--accent-strong);
+  font-size: 13px;
+}
+.clarification-recommendation p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 10px;
+}
+.clarification-recommendation .button {
+  flex: none;
+}
+.clarification-divider {
+  margin: 2px 0 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 10px;
+}
+.clarification-divider::before,
+.clarification-divider::after {
+  height: 1px;
+  background: var(--line);
+  content: "";
+  flex: 1;
+}
+.clarification-question__number {
+  display: block;
+  margin-bottom: 5px;
+  color: var(--accent);
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+}
+.clarification-question__title {
+  display: block;
+  font-size: 13px;
+  line-height: 1.55;
+}
+.clarification-card .clarification-question__reason {
+  margin: 5px 0 11px;
+  color: var(--muted);
+  font-size: 10px;
+}
+.option-chips {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
 }
 .option-chips button {
-  border: 1px solid transparent;
+  min-height: 38px;
+  border: 1px solid #dce5df;
   color: #53605a;
-  font-size: 10px;
-  padding: 5px 8px;
-  border-radius: 5px;
-  background: #edf2ee;
+  font-size: 11px;
+  line-height: 1.4;
+  text-align: left;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #fffefa;
   cursor: pointer;
+}
+.option-chips button:hover {
+  border-color: #9bc4b3;
+  background: #f3f9f6;
 }
 .option-chips button.selected {
   border-color: #65a58e;
   color: var(--accent);
   background: var(--accent-soft);
+  box-shadow: 0 0 0 1px rgba(12, 113, 84, 0.08);
+}
+.option-chips button.option-chips__recommended {
+  color: var(--accent-strong);
+}
+.option-chips__recommended em {
+  margin-left: 4px;
+  padding: 2px 4px;
+  border-radius: 4px;
+  background: var(--accent-soft);
+  font-size: 8px;
+  font-style: normal;
+  font-weight: 800;
+}
+.clarification-custom-toggle {
+  margin-top: 9px;
+  padding: 0;
+  border: 0;
+  color: var(--muted);
+  background: transparent;
+  font-size: 10px;
+  cursor: pointer;
+}
+.clarification-custom-toggle:hover {
+  color: var(--accent);
+  text-decoration: underline;
 }
 .clarification-card textarea {
   width: 100%;
@@ -932,6 +1033,16 @@ input {
 .clarification-card__actions span {
   color: var(--muted);
   font-size: 9px;
+}
+@media (max-width: 620px) {
+  .clarification-recommendation,
+  .clarification-card__actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .option-chips {
+    grid-template-columns: 1fr;
+  }
 }
 .adjustment-bar {
   margin-top: 16px;
